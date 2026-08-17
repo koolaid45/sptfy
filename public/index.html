@@ -306,6 +306,34 @@
     padding: 6px 0;
   }
 
+  /* Crossfade for line changes. Each line fades down and out, text is
+     swapped while invisible, then it fades back up - so lyrics drift
+     upward as the song advances rather than popping. */
+  #lyricPrev, #lyricCurrent, #lyricNext {
+    opacity: 1;
+    -webkit-transform: translateY(0);
+    transform: translateY(0);
+    -webkit-transition: opacity 0.28s ease, -webkit-transform 0.28s ease;
+    transition: opacity 0.28s ease, transform 0.28s ease;
+  }
+  #lyricsTriplet.swapping #lyricPrev,
+  #lyricsTriplet.swapping #lyricCurrent,
+  #lyricsTriplet.swapping #lyricNext {
+    opacity: 0;
+    -webkit-transform: translateY(-10px);
+    transform: translateY(-10px);
+  }
+  /* Incoming state: start slightly low, then settle to neutral. */
+  #lyricsTriplet.entering #lyricPrev,
+  #lyricsTriplet.entering #lyricCurrent,
+  #lyricsTriplet.entering #lyricNext {
+    opacity: 0;
+    -webkit-transform: translateY(10px);
+    transform: translateY(10px);
+    -webkit-transition: none;
+    transition: none;
+  }
+
   #idle {
     position: fixed; top: 0; left: 0; right: 0; bottom: 0;
     display: -webkit-box;
@@ -396,6 +424,9 @@
   var baseServerTime = 0;
   var durationMs = 0;
   var isPlaying = false;
+  var lastActiveIdx = null;
+  var lyricSwapTimer = null;
+  var lyricEnterTimer = null;
 
   function xhrGet(url, cb) {
     var xhr = new XMLHttpRequest();
@@ -540,13 +571,53 @@
       if (syncedLines[i].time <= pos) activeIdx = i;
       else break;
     }
-    var prevText = activeIdx > 0 ? syncedLines[activeIdx - 1].text : '';
-    var currText = activeIdx >= 0 ? syncedLines[activeIdx].text : (syncedLines.length ? syncedLines[0].text : '');
-    var nextText = (activeIdx >= 0 && activeIdx + 1 < syncedLines.length) ? syncedLines[activeIdx + 1].text : '';
 
-    setText(document.getElementById('lyricPrev'), prevText);
-    setText(document.getElementById('lyricCurrent'), currText);
-    setText(document.getElementById('lyricNext'), nextText);
+    // Only touch the DOM when the line actually changes - otherwise the
+    // 500ms tick would restart the animation constantly.
+    if (activeIdx === lastActiveIdx) return;
+    lastActiveIdx = activeIdx;
+    showLyricLines(activeIdx, true);
+  }
+
+  function lineTextAt(idx) {
+    if (idx < 0 || idx >= syncedLines.length) return '';
+    return syncedLines[idx].text;
+  }
+
+  function writeLyricTriplet(activeIdx) {
+    var currIdx = activeIdx >= 0 ? activeIdx : 0;
+    setText(document.getElementById('lyricPrev'), lineTextAt(currIdx - 1));
+    setText(document.getElementById('lyricCurrent'), lineTextAt(currIdx));
+    setText(document.getElementById('lyricNext'), lineTextAt(currIdx + 1));
+  }
+
+  function showLyricLines(activeIdx, animate) {
+    var triplet = document.getElementById('lyricsTriplet');
+
+    if (!animate) {
+      triplet.className = '';
+      writeLyricTriplet(activeIdx);
+      return;
+    }
+
+    // Fade/slide out, swap text while invisible, then fade back in from
+    // below. Timeouts are used rather than transitionend because the old
+    // WebView fires that event inconsistently when several elements
+    // transition at once.
+    if (lyricSwapTimer) { clearTimeout(lyricSwapTimer); }
+    if (lyricEnterTimer) { clearTimeout(lyricEnterTimer); }
+
+    triplet.className = 'swapping';
+
+    lyricSwapTimer = setTimeout(function () {
+      writeLyricTriplet(activeIdx);
+      // Jump to the "entering" position with transitions off...
+      triplet.className = 'entering';
+      // ...then next frame, release to neutral so it animates in.
+      lyricEnterTimer = setTimeout(function () {
+        triplet.className = '';
+      }, 20);
+    }, 280);
   }
 
   function bounceVisualizer() {
@@ -599,6 +670,13 @@
         } else {
           syncedLines = [{ time: 0, text: '(no lyrics found)' }];
         }
+
+        // New track: clear any in-flight fade and render the opening lines
+        // straight away, so the switch isn't stuck mid-animation.
+        if (lyricSwapTimer) { clearTimeout(lyricSwapTimer); lyricSwapTimer = null; }
+        if (lyricEnterTimer) { clearTimeout(lyricEnterTimer); lyricEnterTimer = null; }
+        lastActiveIdx = null;
+        showLyricLines(-1, false);
 
         if (data.palette) {
           renderPalette(data.palette.swatches);
