@@ -4,76 +4,408 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Now Playing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=Space+Grotesk:wght@400;500&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
+  /*
+    NOTE: this stylesheet deliberately avoids CSS custom properties (var())
+    and CSS Grid. Both are unsupported on the Android 4.4 WebView this runs
+    on (Chromium ~30, predates var() support added in Chrome 49 and Grid
+    added in Chrome 57). Dynamic per-track theming is done by injecting a
+    second <style> block with plain hex values instead - see #themeOverride
+    and applyTheme() in the script below. The 2x2 layout is nested flexbox.
+  */
+
   html, body {
-    margin: 0; padding: 0; background: #000; color: #2d8f06;
-    font-family: sans-serif; overflow: hidden; height: 100%;
-  }
-  #wrap {
-    display: -webkit-box;
-    -webkit-box-orient: horizontal;
-    height: 100%;
-  }
-  #left {
-    width: 40%;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-box-pack: center;
-    -webkit-box-align: center;
-    padding: 20px;
-    box-sizing: border-box;
-  }
-  #art { width: 100%; max-width: 320px; border-radius: 8px; }
-  #meta { margin-top: 16px; text-align: center; }
-  #title { font-size: 22px; font-weight: bold; }
-  #artist { font-size: 16px; color: #ccc; margin-top: 4px; }
-  #right {
-    width: 60%;
+    margin: 0; padding: 0; height: 100%;
+    background: #15120F;
+    color: #F4EFE6;
+    font-family: 'Space Grotesk', sans-serif;
     overflow: hidden;
+  }
+
+  #backdrop {
+    position: fixed; top: -10%; left: -10%; width: 120%; height: 120%;
+    background-size: cover; background-position: center;
+    -webkit-filter: blur(60px);
+    filter: blur(60px);
+    opacity: 0.22;
+  }
+  #vignette {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: radial-gradient(ellipse at center, rgba(21,18,15,0) 40%, rgba(21,18,15,0.85) 100%);
+    pointer-events: none;
+  }
+
+  #stage {
     position: relative;
-    padding: 20px;
+    height: 100%;
     box-sizing: border-box;
+    padding: 1.6vh 1.6vw;
+    display: -webkit-box;
+    display: flex;
+    -webkit-box-orient: vertical;
+    flex-direction: column;
   }
-  #lyricsInner {
+  .row {
+    -webkit-box-flex: 1;
+    flex: 1;
+    display: -webkit-box;
+    display: flex;
+    -webkit-box-orient: horizontal;
+  }
+  .row + .row { margin-top: 3px; }
+
+  .panel {
+    -webkit-box-flex: 1;
+    flex: 1;
+    box-sizing: border-box;
+    background: #1D1914;
+    border: 1px solid rgba(255,178,56,0.18);
+    padding: 2.2vh 1.8vw;
+    display: -webkit-box;
+    display: flex;
+    -webkit-box-orient: vertical;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .panel + .panel { margin-left: 3px; }
+
+  .eyebrow {
+    font-family: 'Space Mono', monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.24em;
+    color: #FFB238;
+    text-transform: uppercase;
+    -webkit-box-flex: 0;
+    flex: none;
+  }
+
+  /* ---- Panel 1: now playing (vinyl + meta + transport) ---- */
+  #panelNowPlaying {
+    -webkit-box-pack: center;
+    justify-content: center;
+    -webkit-box-align: center;
+    align-items: center;
+    text-align: center;
+  }
+  #panelNowPlaying .eyebrow { position: absolute; top: 2.2vh; left: 1.8vw; }
+
+  .vinylWrap {
     position: relative;
-    -webkit-transition: -webkit-transform 0.4s ease;
+    width: 30vw;
+    max-width: 180px;
+    margin-top: 4px;
   }
-  .line { font-size: 20px; line-height: 1.6; color: #666; padding: 4px 0; }
-  .line.active { color: #fff; font-weight: bold; font-size: 24px; }
-  #idle { text-align: center; margin-top: 40%; font-size: 20px; color: #888; }
+  .vinylWrap .spacer { width: 100%; padding-bottom: 100%; }
+  #record {
+    position: absolute;
+    top: 6%;
+    right: -22%;
+    width: 88%;
+    padding-bottom: 88%;
+    height: 0;
+    border-radius: 50%;
+    background:
+      repeating-radial-gradient(circle at center,
+        #0A0A0A 0, #0A0A0A 2px,
+        #161616 2px, #161616 4px);
+    box-shadow: 0 10px 22px rgba(0,0,0,0.55);
+    z-index: 1;
+    -webkit-animation: spin 2.6s linear infinite;
+    animation: spin 2.6s linear infinite;
+    -webkit-animation-play-state: paused;
+    animation-play-state: paused;
+  }
+  #record.spinning { -webkit-animation-play-state: running; animation-play-state: running; }
+  .recordLabel {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 24%; padding-bottom: 24%; height: 0;
+    -webkit-transform: translate(-50%, -50%);
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: #FFB238;
+  }
+  @-webkit-keyframes spin { from { -webkit-transform: rotate(0deg); } to { -webkit-transform: rotate(360deg); } }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+  #artFrame {
+    position: relative;
+    z-index: 2;
+    width: 78%;
+    padding: 7px;
+    background: #12100D;
+    border: 1px solid rgba(255,178,56,0.18);
+    border-radius: 3px;
+    box-sizing: border-box;
+    box-shadow: 0 16px 30px rgba(0,0,0,0.45);
+  }
+  #art { display: block; width: 100%; border-radius: 2px; }
+
+  #title {
+    margin-top: 16px;
+    font-family: 'Big Shoulders Display', sans-serif;
+    font-weight: 800;
+    font-size: clamp(14px, 2.2vw, 19px);
+    line-height: 1.1;
+    text-transform: uppercase;
+    max-width: 90%;
+  }
+  #artist {
+    margin-top: 3px;
+    font-size: clamp(11px, 1.6vw, 13px);
+    color: #948C7E;
+  }
+
+  #transport {
+    margin-top: 14px;
+    display: -webkit-box;
+    display: flex;
+    -webkit-box-align: center;
+    align-items: center;
+    width: 78%;
+    max-width: 220px;
+  }
+  #elapsed, #total {
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    color: #FFB238;
+    min-width: 30px;
+  }
+  #total { text-align: right; color: #948C7E; }
+  #progressTrack {
+    -webkit-box-flex: 1;
+    flex: 1;
+    height: 3px;
+    margin: 0 8px;
+    background: rgba(255,178,56,0.18);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  #progressFill {
+    height: 100%;
+    width: 0%;
+    background: #FFB238;
+    box-shadow: 0 0 8px rgba(255,178,56,0.55);
+    -webkit-transition: width 0.4s linear;
+    transition: width 0.4s linear;
+  }
+
+  /* ---- Panel 2: bouncing visualizer ---- */
+  #panelVisualizer {
+    -webkit-box-pack: center;
+    justify-content: center;
+    -webkit-box-align: center;
+    align-items: center;
+  }
+  #visualizerLabel { position: absolute; top: 2.2vh; right: 1.8vw; }
+  #visualizer {
+    display: -webkit-box;
+    display: flex;
+    -webkit-box-align: end;
+    align-items: flex-end;
+    -webkit-box-pack: center;
+    justify-content: center;
+    height: 40%;
+    width: 70%;
+    gap: 5px;
+  }
+  #visualizer span {
+    display: block;
+    -webkit-box-flex: 1;
+    flex: 1;
+    max-width: 10px;
+    height: 12%;
+    background: #FFB238;
+    border-radius: 2px 2px 0 0;
+    opacity: 0.9;
+    -webkit-transition: height 0.16s ease;
+    transition: height 0.16s ease;
+  }
+
+  /* ---- Panel 3: color palette ---- */
+  #panelPalette {
+    -webkit-box-pack: center;
+    justify-content: center;
+  }
+  #paletteList {
+    margin-top: 10px;
+    display: -webkit-box;
+    display: flex;
+    -webkit-box-orient: vertical;
+    flex-direction: column;
+    -webkit-box-pack: center;
+    justify-content: center;
+    -webkit-box-flex: 1;
+    flex: 1;
+  }
+  .swatchRow {
+    display: -webkit-box;
+    display: flex;
+    -webkit-box-align: center;
+    align-items: center;
+    padding: 5px 0;
+  }
+  .swatchChip {
+    width: 22px; height: 22px;
+    border-radius: 3px;
+    border: 1px solid rgba(255,255,255,0.15);
+    -webkit-box-flex: 0;
+    flex: none;
+  }
+  .swatchText { margin-left: 10px; overflow: hidden; }
+  .swatchName {
+    font-size: 12.5px;
+    color: #F4EFE6;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .swatchRole {
+    font-family: 'Space Mono', monospace;
+    font-size: 9.5px;
+    letter-spacing: 0.08em;
+    color: #948C7E;
+    text-transform: uppercase;
+    margin-top: 1px;
+  }
+
+  /* ---- Panel 4: lyrics (prev / current / next) ---- */
+  #panelLyrics {
+    -webkit-box-pack: center;
+    justify-content: center;
+  }
+  #lyricsTriplet {
+    margin-top: 10px;
+    text-align: center;
+    -webkit-box-flex: 1;
+    flex: 1;
+    display: -webkit-box;
+    display: flex;
+    -webkit-box-orient: vertical;
+    flex-direction: column;
+    -webkit-box-pack: center;
+    justify-content: center;
+  }
+  .lyricLine {
+    color: rgba(255,178,56,0.32);
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 3px 0;
+    max-height: 2.6em;
+    overflow: hidden;
+  }
+  #lyricCurrent {
+    color: #F4EFE6;
+    font-weight: 500;
+    font-size: clamp(15px, 2.4vw, 20px);
+    line-height: 1.4;
+    text-shadow: 0 0 16px rgba(255,178,56,0.55);
+    padding: 6px 0;
+  }
+
+  #idle {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    display: -webkit-box;
+    display: flex;
+    -webkit-box-orient: vertical;
+    flex-direction: column;
+    -webkit-box-align: center;
+    align-items: center;
+    -webkit-box-pack: center;
+    justify-content: center;
+    background: #15120F;
+  }
+  #idle .idleLabel {
+    font-family: 'Space Mono', monospace;
+    letter-spacing: 0.3em;
+    font-size: 12px;
+    color: #FFB238;
+    text-transform: uppercase;
+  }
+  #idle .idleSub { margin-top: 10px; color: #948C7E; font-size: 14px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #record { -webkit-animation: none; animation: none; }
+    #visualizer span { -webkit-transition: none; transition: none; }
+  }
 </style>
+<style id="themeOverride"></style>
 </head>
 <body>
-<div id="wrap" style="display:none;">
-  <div id="left">
-    <img id="art" src="" alt="">
-    <div id="meta">
+
+<div id="backdrop"></div>
+<div id="vignette"></div>
+
+<div id="stage" style="display:none;">
+  <div class="row">
+    <div class="panel" id="panelNowPlaying" style="position:relative;">
+      <div class="eyebrow">Now Playing</div>
+      <div class="vinylWrap">
+        <div class="spacer"></div>
+        <div id="record"><div class="recordLabel"></div></div>
+        <div id="artFrame" style="position:absolute; top:0; left:0;"><img id="art" src="" alt=""></div>
+      </div>
       <div id="title"></div>
       <div id="artist"></div>
+      <div id="transport">
+        <span id="elapsed">0:00</span>
+        <div id="progressTrack"><div id="progressFill"></div></div>
+        <span id="total">0:00</span>
+      </div>
+    </div>
+    <div class="panel" id="panelVisualizer" style="position:relative;">
+      <div class="eyebrow" id="visualizerLabel">Level</div>
+      <div id="visualizer">
+        <span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span>
+      </div>
     </div>
   </div>
-  <div id="right">
-    <div id="lyricsInner"></div>
+  <div class="row">
+    <div class="panel" id="panelPalette">
+      <div class="eyebrow">Palette</div>
+      <div id="paletteList"></div>
+    </div>
+    <div class="panel" id="panelLyrics">
+      <div class="eyebrow">Lyrics</div>
+      <div id="lyricsTriplet">
+        <div class="lyricLine" id="lyricPrev"></div>
+        <div id="lyricCurrent"></div>
+        <div class="lyricLine" id="lyricNext"></div>
+      </div>
+    </div>
   </div>
 </div>
-<div id="idle">Nothing playing</div>
+
+<div id="idle">
+  <div class="idleLabel">Standby</div>
+  <div class="idleSub">Nothing playing right now</div>
+</div>
 
 <script>
 (function () {
   var POLL_MS = 4000;
+  var VISUALIZER_MS = 160;
   var lastTrackKey = null;
   var syncedLines = [];
   var baseProgressMs = 0;
   var baseServerTime = 0;
+  var durationMs = 0;
   var isPlaying = false;
 
   function xhrGet(url, cb) {
     var xhr = new XMLHttpRequest();
+    var requestStart = Date.now();
     xhr.open('GET', url, true);
     xhr.onreadystatechange = function () {
       if (xhr.readyState === 4) {
+        var roundTripMs = Date.now() - requestStart;
         if (xhr.status === 200) {
-          try { cb(null, JSON.parse(xhr.responseText)); }
+          try { cb(null, JSON.parse(xhr.responseText), roundTripMs); }
           catch (e) { cb(e); }
         } else {
           cb(new Error('HTTP ' + xhr.status));
@@ -100,16 +432,90 @@
     return out;
   }
 
-  function renderLyricsShell() {
-    var inner = document.getElementById('lyricsInner');
-    inner.innerHTML = '';
-    for (var i = 0; i < syncedLines.length; i++) {
-      var div = document.createElement('div');
-      div.className = 'line';
-      div.id = 'line-' + i;
-      div.appendChild(document.createTextNode(syncedLines[i].text));
-      inner.appendChild(div);
+  function formatTime(ms) {
+    if (ms < 0) ms = 0;
+    var totalSec = Math.floor(ms / 1000);
+    var m = Math.floor(totalSec / 60);
+    var s = totalSec % 60;
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  function setText(el, text) {
+    el.innerHTML = '';
+    el.appendChild(document.createTextNode(text || ''));
+  }
+
+  function renderPalette(swatches) {
+    var list = document.getElementById('paletteList');
+    list.innerHTML = '';
+    if (!swatches || !swatches.length) {
+      var empty = document.createElement('div');
+      empty.className = 'swatchRole';
+      empty.appendChild(document.createTextNode('No palette available'));
+      list.appendChild(empty);
+      return;
     }
+    for (var i = 0; i < swatches.length; i++) {
+      var sw = swatches[i];
+      var row = document.createElement('div');
+      row.className = 'swatchRow';
+
+      var chip = document.createElement('div');
+      chip.className = 'swatchChip';
+      chip.style.backgroundColor = sw.hex;
+
+      var textWrap = document.createElement('div');
+      textWrap.className = 'swatchText';
+
+      var nameEl = document.createElement('div');
+      nameEl.className = 'swatchName';
+      nameEl.appendChild(document.createTextNode(sw.name));
+
+      var roleEl = document.createElement('div');
+      roleEl.className = 'swatchRole';
+      roleEl.appendChild(document.createTextNode(sw.role + ' \u00B7 ' + sw.hex));
+
+      textWrap.appendChild(nameEl);
+      textWrap.appendChild(roleEl);
+      row.appendChild(chip);
+      row.appendChild(textWrap);
+      list.appendChild(row);
+    }
+  }
+
+  function hexToRgb(hex) {
+    var clean = hex.replace('#', '');
+    return {
+      r: parseInt(clean.substring(0, 2), 16),
+      g: parseInt(clean.substring(2, 4), 16),
+      b: parseInt(clean.substring(4, 6), 16)
+    };
+  }
+  function hexToRgba(hex, alpha) {
+    var c = hexToRgb(hex);
+    return 'rgba(' + c.r + ',' + c.g + ',' + c.b + ',' + alpha + ')';
+  }
+
+  // Injects a plain-hex-value stylesheet (no var()) so the whole page
+  // recolors itself per track without relying on CSS custom properties,
+  // which the target WebView doesn't support.
+  function applyTheme(theme) {
+    var styleEl = document.getElementById('themeOverride');
+    if (!theme) { styleEl.textContent = ''; return; }
+    var accent = theme.accent;
+    var css =
+      'html, body { background: ' + theme.void + '; }' +
+      '#idle { background: ' + theme.void + '; }' +
+      '.panel { background: ' + theme.panel + '; border-color: ' + hexToRgba(accent, 0.28) + '; }' +
+      '#artFrame { border-color: ' + hexToRgba(accent, 0.28) + '; }' +
+      '.eyebrow, #elapsed, #idle .idleLabel { color: ' + accent + '; }' +
+      '#progressFill { background: ' + accent + '; box-shadow: 0 0 8px ' + hexToRgba(accent, 0.55) + '; }' +
+      '#progressTrack { background: ' + hexToRgba(accent, 0.2) + '; }' +
+      '.recordLabel { background: ' + accent + '; }' +
+      '#lyricCurrent { text-shadow: 0 0 16px ' + hexToRgba(accent, 0.55) + '; }' +
+      '.lyricLine { color: ' + hexToRgba(accent, 0.35) + '; }' +
+      '#visualizer span { background: ' + accent + '; }';
+    styleEl.textContent = css;
   }
 
   function currentEstimatedProgress() {
@@ -119,52 +525,72 @@
   }
 
   function updateHighlight() {
-    if (!syncedLines.length) return;
     var pos = currentEstimatedProgress();
+
+    if (durationMs > 0) {
+      var pct = Math.max(0, Math.min(100, (pos / durationMs) * 100));
+      document.getElementById('progressFill').style.width = pct + '%';
+      document.getElementById('elapsed').textContent = formatTime(pos);
+      document.getElementById('total').textContent = formatTime(durationMs);
+    }
+
+    if (!syncedLines.length) return;
     var activeIdx = -1;
     for (var i = 0; i < syncedLines.length; i++) {
       if (syncedLines[i].time <= pos) activeIdx = i;
       else break;
     }
-    for (var j = 0; j < syncedLines.length; j++) {
-      var el = document.getElementById('line-' + j);
-      if (!el) continue;
-      el.className = (j === activeIdx) ? 'line active' : 'line';
-    }
-    if (activeIdx >= 0) {
-      var activeEl = document.getElementById('line-' + activeIdx);
-      var container = document.getElementById('right');
-      var inner = document.getElementById('lyricsInner');
-      if (activeEl && container && inner) {
-        var offset = activeEl.offsetTop - (container.clientHeight / 2) + (activeEl.clientHeight / 2);
-        inner.style.webkitTransform = 'translateY(' + (-offset) + 'px)';
+    var prevText = activeIdx > 0 ? syncedLines[activeIdx - 1].text : '';
+    var currText = activeIdx >= 0 ? syncedLines[activeIdx].text : (syncedLines.length ? syncedLines[0].text : '');
+    var nextText = (activeIdx >= 0 && activeIdx + 1 < syncedLines.length) ? syncedLines[activeIdx + 1].text : '';
+
+    setText(document.getElementById('lyricPrev'), prevText);
+    setText(document.getElementById('lyricCurrent'), currText);
+    setText(document.getElementById('lyricNext'), nextText);
+  }
+
+  function bounceVisualizer() {
+    var bars = document.getElementById('visualizer').getElementsByTagName('span');
+    for (var i = 0; i < bars.length; i++) {
+      if (isPlaying) {
+        var h = 15 + Math.random() * 85;
+        bars[i].style.height = h + '%';
+      } else {
+        bars[i].style.height = '10%';
       }
     }
   }
 
   function poll() {
-    xhrGet('/api/now-playing', function (err, data) {
+    xhrGet('/api/now-playing', function (err, data, roundTripMs) {
       if (err || !data || !data.playing) {
-        document.getElementById('wrap').style.display = 'none';
-        document.getElementById('idle').style.display = 'block';
+        document.getElementById('stage').style.display = 'none';
+        document.getElementById('idle').style.display = 'flex';
         lastTrackKey = null;
+        isPlaying = false;
         return;
       }
-      document.getElementById('wrap').style.display = '-webkit-box';
+      document.getElementById('stage').style.display = 'flex';
       document.getElementById('idle').style.display = 'none';
 
       var key = data.artist + '::' + data.title;
       isPlaying = data.isPlaying;
-      baseProgressMs = data.progressMs;
+      var networkCompensationMs = isPlaying ? Math.round((roundTripMs || 0) / 2) : 0;
+      baseProgressMs = data.progressMs + networkCompensationMs;
       baseServerTime = Date.now();
+      durationMs = data.durationMs || 0;
+
+      var recordEl = document.getElementById('record');
+      recordEl.className = isPlaying ? 'spinning' : '';
 
       if (key !== lastTrackKey) {
         lastTrackKey = key;
-        document.getElementById('title').innerHTML = '';
-        document.getElementById('title').appendChild(document.createTextNode(data.title));
-        document.getElementById('artist').innerHTML = '';
-        document.getElementById('artist').appendChild(document.createTextNode(data.artist));
+        setText(document.getElementById('title'), data.title);
+        setText(document.getElementById('artist'), data.artist);
         document.getElementById('art').src = data.albumArt || '';
+
+        var backdropEl = document.getElementById('backdrop');
+        backdropEl.style.backgroundImage = data.albumArt ? 'url(' + data.albumArt + ')' : 'none';
 
         if (data.lyrics && data.lyrics.synced) {
           syncedLines = parseLRC(data.lyrics.synced);
@@ -173,13 +599,21 @@
         } else {
           syncedLines = [{ time: 0, text: '(no lyrics found)' }];
         }
-        renderLyricsShell();
+
+        if (data.palette) {
+          renderPalette(data.palette.swatches);
+          applyTheme(data.palette.theme);
+        } else {
+          renderPalette(null);
+          applyTheme(null);
+        }
       }
     });
   }
 
   setInterval(poll, POLL_MS);
   setInterval(updateHighlight, 500);
+  setInterval(bounceVisualizer, VISUALIZER_MS);
   poll();
 })();
 </script>
