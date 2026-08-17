@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Now Playing</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; background: #000; color: #fff;
+    font-family: sans-serif; overflow: hidden; height: 100%;
+  }
+  #wrap {
+    display: -webkit-box;
+    -webkit-box-orient: horizontal;
+    height: 100%;
+  }
+  #left {
+    width: 40%;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-box-pack: center;
+    -webkit-box-align: center;
+    padding: 20px;
+    box-sizing: border-box;
+  }
+  #art { width: 100%; max-width: 320px; border-radius: 8px; }
+  #meta { margin-top: 16px; text-align: center; }
+  #title { font-size: 22px; font-weight: bold; }
+  #artist { font-size: 16px; color: #ccc; margin-top: 4px; }
+  #right {
+    width: 60%;
+    overflow: hidden;
+    position: relative;
+    padding: 20px;
+    box-sizing: border-box;
+  }
+  #lyricsInner {
+    position: relative;
+    -webkit-transition: -webkit-transform 0.4s ease;
+  }
+  .line { font-size: 20px; line-height: 1.6; color: #666; padding: 4px 0; }
+  .line.active { color: #fff; font-weight: bold; font-size: 24px; }
+  #idle { text-align: center; margin-top: 40%; font-size: 20px; color: #888; }
+</style>
+</head>
+<body>
+<div id="wrap" style="display:none;">
+  <div id="left">
+    <img id="art" src="" alt="">
+    <div id="meta">
+      <div id="title"></div>
+      <div id="artist"></div>
+    </div>
+  </div>
+  <div id="right">
+    <div id="lyricsInner"></div>
+  </div>
+</div>
+<div id="idle">Nothing playing</div>
+
+<script>
+(function () {
+  var POLL_MS = 4000;
+  var lastTrackKey = null;
+  var syncedLines = [];
+  var baseProgressMs = 0;
+  var baseServerTime = 0;
+  var isPlaying = false;
+
+  function xhrGet(url, cb) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState === 4) {
+        if (xhr.status === 200) {
+          try { cb(null, JSON.parse(xhr.responseText)); }
+          catch (e) { cb(e); }
+        } else {
+          cb(new Error('HTTP ' + xhr.status));
+        }
+      }
+    };
+    xhr.send();
+  }
+
+  function parseLRC(lrc) {
+    var lines = lrc.split('\n');
+    var out = [];
+    var re = /\[(\d{2}):(\d{2}(?:\.\d+)?)\]/;
+    for (var i = 0; i < lines.length; i++) {
+      var m = re.exec(lines[i]);
+      if (m) {
+        var min = parseInt(m[1], 10);
+        var sec = parseFloat(m[2]);
+        var timeMs = (min * 60 + sec) * 1000;
+        var text = lines[i].replace(re, '').replace(/^\s+/, '');
+        out.push({ time: timeMs, text: text });
+      }
+    }
+    return out;
+  }
+
+  function renderLyricsShell() {
+    var inner = document.getElementById('lyricsInner');
+    inner.innerHTML = '';
+    for (var i = 0; i < syncedLines.length; i++) {
+      var div = document.createElement('div');
+      div.className = 'line';
+      div.id = 'line-' + i;
+      div.appendChild(document.createTextNode(syncedLines[i].text));
+      inner.appendChild(div);
+    }
+  }
+
+  function currentEstimatedProgress() {
+    if (!isPlaying) return baseProgressMs;
+    var elapsed = Date.now() - baseServerTime;
+    return baseProgressMs + elapsed;
+  }
+
+  function updateHighlight() {
+    if (!syncedLines.length) return;
+    var pos = currentEstimatedProgress();
+    var activeIdx = -1;
+    for (var i = 0; i < syncedLines.length; i++) {
+      if (syncedLines[i].time <= pos) activeIdx = i;
+      else break;
+    }
+    for (var j = 0; j < syncedLines.length; j++) {
+      var el = document.getElementById('line-' + j);
+      if (!el) continue;
+      el.className = (j === activeIdx) ? 'line active' : 'line';
+    }
+    if (activeIdx >= 0) {
+      var activeEl = document.getElementById('line-' + activeIdx);
+      var container = document.getElementById('right');
+      var inner = document.getElementById('lyricsInner');
+      if (activeEl && container && inner) {
+        var offset = activeEl.offsetTop - (container.clientHeight / 2) + (activeEl.clientHeight / 2);
+        inner.style.webkitTransform = 'translateY(' + (-offset) + 'px)';
+      }
+    }
+  }
+
+  function poll() {
+    xhrGet('/api/now-playing', function (err, data) {
+      if (err || !data || !data.playing) {
+        document.getElementById('wrap').style.display = 'none';
+        document.getElementById('idle').style.display = 'block';
+        lastTrackKey = null;
+        return;
+      }
+      document.getElementById('wrap').style.display = '-webkit-box';
+      document.getElementById('idle').style.display = 'none';
+
+      var key = data.artist + '::' + data.title;
+      isPlaying = data.isPlaying;
+      baseProgressMs = data.progressMs;
+      baseServerTime = Date.now();
+
+      if (key !== lastTrackKey) {
+        lastTrackKey = key;
+        document.getElementById('title').innerHTML = '';
+        document.getElementById('title').appendChild(document.createTextNode(data.title));
+        document.getElementById('artist').innerHTML = '';
+        document.getElementById('artist').appendChild(document.createTextNode(data.artist));
+        document.getElementById('art').src = data.albumArt || '';
+
+        if (data.lyrics && data.lyrics.synced) {
+          syncedLines = parseLRC(data.lyrics.synced);
+        } else if (data.lyrics && data.lyrics.plain) {
+          syncedLines = [{ time: 0, text: data.lyrics.plain }];
+        } else {
+          syncedLines = [{ time: 0, text: '(no lyrics found)' }];
+        }
+        renderLyricsShell();
+      }
+    });
+  }
+
+  setInterval(poll, POLL_MS);
+  setInterval(updateHighlight, 500);
+  poll();
+})();
+</script>
+</body>
+</html>
