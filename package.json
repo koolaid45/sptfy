@@ -1,0 +1,16 @@
+{
+  "name": "spotify-display",
+  "version": "1.0.0",
+  "description": "Backend + display page for an old Android device showing currently playing Spotify track and lyrics",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "dotenv": "^16.4.5"
+  }
+}
