@@ -4,300 +4,59 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Now Playing</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=Space+Grotesk:wght@400;500&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --void: #15120F;
-    --panel: #1D1914;
-    --amber: #FFB238;
-    --amber-glow: rgba(255,178,56,0.55);
-    --amber-dim: rgba(255,178,56,0.32);
-    --ink: #F4EFE6;
-    --ink-dim: #948C7E;
-    --hairline: rgba(255,178,56,0.18);
-  }
-
   html, body {
-    margin: 0; padding: 0; height: 100%;
-    background: var(--void);
-    color: var(--ink);
-    font-family: 'Space Grotesk', sans-serif;
-    overflow: hidden;
+    margin: 0; padding: 0; background: #000; color: #2d8f06;
+    font-family: sans-serif; overflow: hidden; height: 100%;
   }
-
-  #backdrop {
-    position: fixed; top: -10%; left: -10%; width: 120%; height: 120%;
-    background-size: cover; background-position: center;
-    -webkit-filter: blur(60px);
-    filter: blur(60px);
-    opacity: 0.32;
-    -webkit-transition: opacity 0.8s ease;
-    transition: opacity 0.8s ease;
-  }
-
-  #vignette {
-    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-    background:
-      radial-gradient(ellipse at center, rgba(21,18,15,0) 40%, rgba(21,18,15,0.85) 100%),
-      linear-gradient(180deg, rgba(21,18,15,0.2) 0%, rgba(21,18,15,0.6) 100%);
-    pointer-events: none;
-  }
-
-  /* Portrait (9:16) is the primary, default layout - the device this
-     runs on is a fixed vertical display. Stacked top-to-bottom: art,
-     meta, transport, then lyrics filling the remaining height. */
-  #stage {
-    position: relative;
+  #wrap {
+    display: -webkit-box;
+    -webkit-box-orient: horizontal;
     height: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+  }
+  #left {
+    width: 40%;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-box-pack: center;
+    -webkit-box-align: center;
+    padding: 20px;
     box-sizing: border-box;
-    padding: 5vh 7vw 4vh;
   }
-
-  #playerCard {
-    width: 100%;
-    max-width: 440px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    flex-shrink: 0;
-  }
-
-  #artFrame {
-    width: 62vw;
-    max-width: 340px;
-    padding: 10px;
-    background: var(--panel);
-    border: 1px solid var(--hairline);
-    border-radius: 4px;
-    box-sizing: border-box;
-    box-shadow: 0 0 0 1px rgba(0,0,0,0.4), 0 20px 40px rgba(0,0,0,0.45);
-  }
-  #art {
-    display: block;
-    width: 100%;
-    border-radius: 2px;
-  }
-
-  #eyebrow {
-    margin-top: 20px;
-    font-family: 'Space Mono', monospace;
-    font-size: 11px;
-    letter-spacing: 0.28em;
-    color: var(--amber);
-    text-transform: uppercase;
-  }
-
-  #title {
-    margin-top: 8px;
-    font-family: 'Big Shoulders Display', sans-serif;
-    font-weight: 800;
-    font-size: clamp(24px, 6vw, 34px);
-    line-height: 1.05;
-    text-transform: uppercase;
-    letter-spacing: 0.01em;
-  }
-
-  #artist {
-    margin-top: 6px;
-    font-size: 16px;
-    color: var(--ink-dim);
-  }
-
-  #transport {
-    margin-top: 20px;
-    display: flex;
-    align-items: center;
-    width: 100%;
-    max-width: 320px;
-  }
-  #elapsed, #total {
-    font-family: 'Space Mono', monospace;
-    font-size: 12px;
-    color: var(--amber);
-    min-width: 34px;
-  }
-  #total { text-align: right; color: var(--ink-dim); }
-  #progressTrack {
-    flex: 1;
-    height: 3px;
-    margin: 0 10px;
-    background: var(--hairline);
-    border-radius: 2px;
+  #art { width: 100%; max-width: 320px; border-radius: 8px; }
+  #meta { margin-top: 16px; text-align: center; }
+  #title { font-size: 22px; font-weight: bold; }
+  #artist { font-size: 16px; color: #ccc; margin-top: 4px; }
+  #right {
+    width: 60%;
     overflow: hidden;
-  }
-  #progressFill {
-    height: 100%;
-    width: 0%;
-    background: var(--amber);
-    box-shadow: 0 0 8px var(--amber-glow);
-    -webkit-transition: width 0.4s linear;
-    transition: width 0.4s linear;
-  }
-
-  #eq {
-    margin-top: 16px;
-    display: flex;
-    justify-content: center;
-    align-items: flex-end;
-    height: 16px;
-    gap: 3px;
-  }
-  #eq span {
-    display: block;
-    width: 3px;
-    height: 30%;
-    background: var(--amber);
-    border-radius: 1px;
-    -webkit-animation: eqPulse 900ms ease-in-out infinite;
-    animation: eqPulse 900ms ease-in-out infinite;
-    -webkit-animation-play-state: paused;
-    animation-play-state: paused;
-    opacity: 0.85;
-  }
-  #eq span:nth-child(1) { -webkit-animation-delay: 0ms; animation-delay: 0ms; }
-  #eq span:nth-child(2) { -webkit-animation-delay: 120ms; animation-delay: 120ms; }
-  #eq span:nth-child(3) { -webkit-animation-delay: 240ms; animation-delay: 240ms; }
-  #eq span:nth-child(4) { -webkit-animation-delay: 80ms; animation-delay: 80ms; }
-  #eq span:nth-child(5) { -webkit-animation-delay: 200ms; animation-delay: 200ms; }
-  #eq.playing span { -webkit-animation-play-state: running; animation-play-state: running; }
-  @-webkit-keyframes eqPulse {
-    0%, 100% { height: 20%; }
-    50% { height: 100%; }
-  }
-  @keyframes eqPulse {
-    0%, 100% { height: 20%; }
-    50% { height: 100%; }
-  }
-
-  #lyricsPane {
-    width: 100%;
-    max-width: 440px;
-    flex: 1;
-    min-height: 0;
     position: relative;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    margin-top: 4vh;
-    padding-top: 4vh;
-    border-top: 1px solid var(--hairline);
+    padding: 20px;
     box-sizing: border-box;
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 12%, black 88%, transparent 100%);
-    mask-image: linear-gradient(to bottom, transparent 0%, black 12%, black 88%, transparent 100%);
   }
   #lyricsInner {
     position: relative;
-    width: 100%;
-    text-align: center;
-    -webkit-transition: -webkit-transform 0.5s ease;
-    transition: transform 0.5s ease;
+    -webkit-transition: -webkit-transform 0.4s ease;
   }
-  .line {
-    font-size: 19px;
-    line-height: 1.75;
-    padding: 5px 0;
-    color: var(--amber-dim);
-    -webkit-transition: color 0.4s ease, font-size 0.4s ease;
-    transition: color 0.4s ease, font-size 0.4s ease;
-  }
-  .line.active {
-    color: var(--ink);
-    font-weight: 500;
-    font-size: 23px;
-    text-shadow: 0 0 16px var(--amber-glow);
-  }
-
-  #idle {
-    position: relative;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-  }
-  #idle .idleLabel {
-    font-family: 'Space Mono', monospace;
-    letter-spacing: 0.3em;
-    font-size: 12px;
-    color: var(--amber);
-    text-transform: uppercase;
-  }
-  #idle .idleSub {
-    margin-top: 10px;
-    color: var(--ink-dim);
-    font-size: 14px;
-  }
-
-  /* Wide/landscape screens: switch to a side-by-side layout instead of
-     the portrait default. Uses orientation + a minimum width so a merely
-     wide phone in portrait doesn't accidentally trigger this. */
-  @media (orientation: landscape) and (min-aspect-ratio: 5/4) {
-    #stage {
-      flex-direction: row;
-      align-items: stretch;
-      padding: 5vh 5vw;
-    }
-    #playerCard {
-      width: 38%;
-      max-width: none;
-      justify-content: center;
-      align-items: flex-start;
-      text-align: left;
-      padding-right: 4vw;
-    }
-    #artFrame { width: 100%; }
-    #transport, #eq { justify-content: flex-start; }
-    #lyricsPane {
-      width: 62%;
-      max-width: none;
-      flex: none;
-      margin-top: 0;
-      padding-top: 0;
-      padding-left: 4vw;
-      border-top: none;
-      border-left: 1px solid var(--hairline);
-    }
-    #lyricsInner { text-align: left; }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    #eq span { -webkit-animation: none; animation: none; }
-  }
+  .line { font-size: 20px; line-height: 1.6; color: #666; padding: 4px 0; }
+  .line.active { color: #fff; font-weight: bold; font-size: 24px; }
+  #idle { text-align: center; margin-top: 40%; font-size: 20px; color: #888; }
 </style>
 </head>
 <body>
-
-<div id="backdrop"></div>
-<div id="vignette"></div>
-
-<div id="stage" style="display:none;">
-  <div id="playerCard">
-    <div id="artFrame"><img id="art" src="" alt=""></div>
-    <div id="eyebrow">Now Playing</div>
-    <div id="title"></div>
-    <div id="artist"></div>
-    <div id="transport">
-      <span id="elapsed">0:00</span>
-      <div id="progressTrack"><div id="progressFill"></div></div>
-      <span id="total">0:00</span>
+<div id="wrap" style="display:none;">
+  <div id="left">
+    <img id="art" src="" alt="">
+    <div id="meta">
+      <div id="title"></div>
+      <div id="artist"></div>
     </div>
-    <div id="eq"><span></span><span></span><span></span><span></span><span></span></div>
   </div>
-  <div id="lyricsPane">
+  <div id="right">
     <div id="lyricsInner"></div>
   </div>
 </div>
-
-<div id="idle">
-  <div class="idleLabel">Standby</div>
-  <div class="idleSub">Nothing playing right now</div>
-</div>
+<div id="idle">Nothing playing</div>
 
 <script>
 (function () {
@@ -306,18 +65,15 @@
   var syncedLines = [];
   var baseProgressMs = 0;
   var baseServerTime = 0;
-  var durationMs = 0;
   var isPlaying = false;
 
   function xhrGet(url, cb) {
     var xhr = new XMLHttpRequest();
-    var requestStart = Date.now();
     xhr.open('GET', url, true);
     xhr.onreadystatechange = function () {
       if (xhr.readyState === 4) {
-        var roundTripMs = Date.now() - requestStart;
         if (xhr.status === 200) {
-          try { cb(null, JSON.parse(xhr.responseText), roundTripMs); }
+          try { cb(null, JSON.parse(xhr.responseText)); }
           catch (e) { cb(e); }
         } else {
           cb(new Error('HTTP ' + xhr.status));
@@ -344,14 +100,6 @@
     return out;
   }
 
-  function formatTime(ms) {
-    if (ms < 0) ms = 0;
-    var totalSec = Math.floor(ms / 1000);
-    var m = Math.floor(totalSec / 60);
-    var s = totalSec % 60;
-    return m + ':' + (s < 10 ? '0' : '') + s;
-  }
-
   function renderLyricsShell() {
     var inner = document.getElementById('lyricsInner');
     inner.innerHTML = '';
@@ -371,16 +119,8 @@
   }
 
   function updateHighlight() {
-    var pos = currentEstimatedProgress();
-
-    if (durationMs > 0) {
-      var pct = Math.max(0, Math.min(100, (pos / durationMs) * 100));
-      document.getElementById('progressFill').style.width = pct + '%';
-      document.getElementById('elapsed').textContent = formatTime(pos);
-      document.getElementById('total').textContent = formatTime(durationMs);
-    }
-
     if (!syncedLines.length) return;
+    var pos = currentEstimatedProgress();
     var activeIdx = -1;
     for (var i = 0; i < syncedLines.length; i++) {
       if (syncedLines[i].time <= pos) activeIdx = i;
@@ -393,39 +133,30 @@
     }
     if (activeIdx >= 0) {
       var activeEl = document.getElementById('line-' + activeIdx);
-      var container = document.getElementById('lyricsPane');
+      var container = document.getElementById('right');
       var inner = document.getElementById('lyricsInner');
       if (activeEl && container && inner) {
         var offset = activeEl.offsetTop - (container.clientHeight / 2) + (activeEl.clientHeight / 2);
         inner.style.webkitTransform = 'translateY(' + (-offset) + 'px)';
-        inner.style.transform = 'translateY(' + (-offset) + 'px)';
       }
     }
   }
 
   function poll() {
-    xhrGet('/api/now-playing', function (err, data, roundTripMs) {
+    xhrGet('/api/now-playing', function (err, data) {
       if (err || !data || !data.playing) {
-        document.getElementById('stage').style.display = 'none';
-        document.getElementById('idle').style.display = 'flex';
+        document.getElementById('wrap').style.display = 'none';
+        document.getElementById('idle').style.display = 'block';
         lastTrackKey = null;
         return;
       }
-      document.getElementById('stage').style.display = 'flex';
+      document.getElementById('wrap').style.display = '-webkit-box';
       document.getElementById('idle').style.display = 'none';
 
       var key = data.artist + '::' + data.title;
       isPlaying = data.isPlaying;
-      // Roughly half the round trip is the response travelling back to us,
-      // during which playback kept moving - nudge the baseline forward to
-      // compensate, on top of the server's own lyrics-fetch compensation.
-      var networkCompensationMs = isPlaying ? Math.round((roundTripMs || 0) / 2) : 0;
-      baseProgressMs = data.progressMs + networkCompensationMs;
+      baseProgressMs = data.progressMs;
       baseServerTime = Date.now();
-      durationMs = data.durationMs || 0;
-
-      var eqEl = document.getElementById('eq');
-      eqEl.className = isPlaying ? 'playing' : '';
 
       if (key !== lastTrackKey) {
         lastTrackKey = key;
@@ -434,9 +165,6 @@
         document.getElementById('artist').innerHTML = '';
         document.getElementById('artist').appendChild(document.createTextNode(data.artist));
         document.getElementById('art').src = data.albumArt || '';
-
-        var backdropEl = document.getElementById('backdrop');
-        backdropEl.style.backgroundImage = data.albumArt ? 'url(' + data.albumArt + ')' : 'none';
 
         if (data.lyrics && data.lyrics.synced) {
           syncedLines = parseLRC(data.lyrics.synced);
