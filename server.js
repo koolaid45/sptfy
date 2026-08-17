@@ -217,6 +217,9 @@ async function extractPalette(albumArtUrl) {
 
 
 
+// simple in-memory lyrics cache keyed by artist+title
+const lyricsCache = new Map();
+
 async function fetchLyrics(artist, title, album, durationSec) {
   const key = `${artist}::${title}`;
   if (lyricsCache.has(key)) return lyricsCache.get(key);
