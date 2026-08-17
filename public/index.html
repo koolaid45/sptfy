@@ -6,315 +6,220 @@
 <title>Now Playing</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=Space+Grotesk:wght@400;500&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Space+Grotesk:wght@400;500&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
   /*
-    NOTE: this stylesheet deliberately avoids CSS custom properties (var())
-    and CSS Grid. Both are unsupported on the Android 4.4 WebView this runs
-    on (Chromium ~30, predates var() support added in Chrome 49 and Grid
-    added in Chrome 57). Dynamic per-track theming is done by injecting a
-    second <style> block with plain hex values instead - see #themeOverride
-    and applyTheme() in the script below. The 2x2 layout is nested flexbox.
+    COMPATIBILITY NOTES (Android 4.4 WebView, Chromium ~30):
+    - No CSS custom properties (var()). Per-track theming is injected as a
+      plain-hex stylesheet at runtime - see applyTheme().
+    - No CSS Grid. Layout is flexbox with -webkit-box fallbacks.
+    - No `gap` property (Chrome 84+). Spacing uses margins.
+    - Avoid percentage heights on flex children: with an implicitly sized
+      flex parent they can resolve to zero on this engine.
   */
 
   html, body {
     margin: 0; padding: 0; height: 100%;
-    background: #15120F;
-    color: #F4EFE6;
+    background: #14110E;
+    color: #F2EDE4;
     font-family: 'Space Grotesk', sans-serif;
     overflow: hidden;
   }
 
+  /* Full-bleed album art wash - the page's main source of colour */
   #backdrop {
-    position: fixed; top: -10%; left: -10%; width: 120%; height: 120%;
+    position: fixed; top: -12%; left: -12%; width: 124%; height: 124%;
     background-size: cover; background-position: center;
-    -webkit-filter: blur(60px);
-    filter: blur(60px);
-    opacity: 0.22;
+    -webkit-filter: blur(70px) saturate(1.5);
+    filter: blur(70px) saturate(1.5);
+    opacity: 0.42;
   }
-  #vignette {
+  #scrim {
     position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-    background: radial-gradient(ellipse at center, rgba(21,18,15,0) 40%, rgba(21,18,15,0.85) 100%);
+    background: linear-gradient(180deg, rgba(20,17,14,0.55) 0%, rgba(20,17,14,0.30) 38%, rgba(20,17,14,0.80) 100%);
     pointer-events: none;
+  }
+  #grain {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    opacity: 0.05;
+    pointer-events: none;
+    background-image: -webkit-repeating-linear-gradient(0deg, rgba(255,255,255,0.7) 0px, rgba(255,255,255,0.7) 1px, transparent 1px, transparent 3px);
+    background-image: repeating-linear-gradient(0deg, rgba(255,255,255,0.7) 0px, rgba(255,255,255,0.7) 1px, transparent 1px, transparent 3px);
   }
 
   #stage {
     position: relative;
     height: 100%;
     box-sizing: border-box;
-    padding: 1.6vh 1.6vw;
+    padding: 4.5vh 7vw 0;
     display: -webkit-box;
     display: flex;
     -webkit-box-orient: vertical;
     flex-direction: column;
   }
-  .row {
-    -webkit-box-flex: 1;
-    flex: 1;
-    display: -webkit-box;
-    display: flex;
-    -webkit-box-orient: horizontal;
-  }
-  .row + .row { margin-top: 3px; }
 
-  .panel {
-    -webkit-box-flex: 1;
-    flex: 1;
-    box-sizing: border-box;
-    background: #1D1914;
-    border: 1px solid rgba(255,178,56,0.18);
-    padding: 2.2vh 1.8vw;
-    display: -webkit-box;
-    display: flex;
-    -webkit-box-orient: vertical;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  .panel + .panel { margin-left: 3px; }
-
-  .eyebrow {
+  .kicker {
     font-family: 'Space Mono', monospace;
-    font-size: 10.5px;
-    letter-spacing: 0.24em;
-    color: #FFB238;
+    font-size: 10px;
+    letter-spacing: 0.32em;
     text-transform: uppercase;
+    color: #E8A33D;
+    opacity: 0.95;
+  }
+
+  /* ---------- SECTION 1 : artwork + identity ---------- */
+  #sectionArt {
     -webkit-box-flex: 0;
     flex: none;
-  }
-
-  /* ---- Panel 1: now playing (vinyl + meta + transport) ---- */
-  #panelNowPlaying {
-    -webkit-box-pack: center;
-    justify-content: center;
+    display: -webkit-box;
+    display: flex;
+    -webkit-box-orient: vertical;
+    flex-direction: column;
     -webkit-box-align: center;
     align-items: center;
     text-align: center;
   }
-  #panelNowPlaying .eyebrow { position: absolute; top: 2.2vh; left: 1.8vw; }
 
-  .vinylWrap {
+  #artStack {
     position: relative;
-    width: 30vw;
-    max-width: 180px;
-    margin-top: 4px;
+    width: 56vw;
+    max-width: 300px;
+    margin-top: 2.4vh;
   }
-  .vinylWrap .spacer { width: 100%; padding-bottom: 100%; }
+  #artRatio { width: 100%; padding-bottom: 100%; }
+
   #record {
     position: absolute;
-    top: 6%;
-    right: -22%;
-    width: 88%;
-    padding-bottom: 88%;
+    top: 7%;
+    left: 20%;
+    width: 86%;
+    padding-bottom: 86%;
     height: 0;
     border-radius: 50%;
     background:
-      repeating-radial-gradient(circle at center,
-        #0A0A0A 0, #0A0A0A 2px,
-        #161616 2px, #161616 4px);
-    box-shadow: 0 10px 22px rgba(0,0,0,0.55);
-    z-index: 1;
-    -webkit-animation: spin 2.6s linear infinite;
-    animation: spin 2.6s linear infinite;
+      -webkit-repeating-radial-gradient(circle at center, #0B0B0B 0, #0B0B0B 2px, #191919 2px, #191919 4px);
+    background:
+      repeating-radial-gradient(circle at center, #0B0B0B 0, #0B0B0B 2px, #191919 2px, #191919 4px);
+    box-shadow: 0 14px 30px rgba(0,0,0,0.6);
+    -webkit-animation: spin 3.2s linear infinite;
+    animation: spin 3.2s linear infinite;
     -webkit-animation-play-state: paused;
     animation-play-state: paused;
   }
-  #record.spinning { -webkit-animation-play-state: running; animation-play-state: running; }
-  .recordLabel {
+  #record.spinning {
+    -webkit-animation-play-state: running;
+    animation-play-state: running;
+  }
+  #recordLabel {
     position: absolute;
     top: 50%; left: 50%;
-    width: 24%; padding-bottom: 24%; height: 0;
+    width: 26%; padding-bottom: 26%; height: 0;
     -webkit-transform: translate(-50%, -50%);
     transform: translate(-50%, -50%);
     border-radius: 50%;
-    background: #FFB238;
+    background: #E8A33D;
+    box-shadow: inset 0 0 0 3px rgba(0,0,0,0.35);
   }
   @-webkit-keyframes spin { from { -webkit-transform: rotate(0deg); } to { -webkit-transform: rotate(360deg); } }
   @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
   #artFrame {
-    position: relative;
-    z-index: 2;
-    width: 78%;
-    padding: 7px;
-    background: #12100D;
-    border: 1px solid rgba(255,178,56,0.18);
-    border-radius: 3px;
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
     box-sizing: border-box;
-    box-shadow: 0 16px 30px rgba(0,0,0,0.45);
+    box-shadow: 0 22px 44px rgba(0,0,0,0.55);
   }
-  #art { display: block; width: 100%; border-radius: 2px; }
+  #art {
+    display: block;
+    width: 100%;
+    border-radius: 1px;
+  }
 
   #title {
-    margin-top: 16px;
-    font-family: 'Big Shoulders Display', sans-serif;
-    font-weight: 800;
-    font-size: clamp(14px, 2.2vw, 19px);
-    line-height: 1.1;
-    text-transform: uppercase;
-    max-width: 90%;
+    margin-top: 2.6vh;
+    font-family: 'Instrument Serif', Georgia, serif;
+    font-weight: 400;
+    font-size: 30px;
+    line-height: 1.08;
+    letter-spacing: 0.005em;
   }
   #artist {
-    margin-top: 3px;
-    font-size: clamp(11px, 1.6vw, 13px);
-    color: #948C7E;
+    margin-top: 0.7vh;
+    font-family: 'Space Mono', monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(242,237,228,0.62);
   }
 
   #transport {
-    margin-top: 14px;
+    margin-top: 2.2vh;
+    width: 100%;
     display: -webkit-box;
     display: flex;
     -webkit-box-align: center;
     align-items: center;
-    width: 78%;
-    max-width: 220px;
   }
   #elapsed, #total {
     font-family: 'Space Mono', monospace;
-    font-size: 11px;
-    color: #FFB238;
-    min-width: 30px;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    min-width: 34px;
   }
-  #total { text-align: right; color: #948C7E; }
+  #elapsed { color: #E8A33D; }
+  #total { text-align: right; color: rgba(242,237,228,0.45); }
   #progressTrack {
     -webkit-box-flex: 1;
     flex: 1;
-    height: 3px;
-    margin: 0 8px;
-    background: rgba(255,178,56,0.18);
-    border-radius: 2px;
-    overflow: hidden;
+    height: 1px;
+    margin: 0 12px;
+    background: rgba(242,237,228,0.16);
+    position: relative;
   }
   #progressFill {
-    height: 100%;
+    position: absolute;
+    top: -1px; left: 0;
+    height: 3px;
     width: 0%;
-    background: #FFB238;
-    box-shadow: 0 0 8px rgba(255,178,56,0.55);
-    -webkit-transition: width 0.4s linear;
-    transition: width 0.4s linear;
+    background: #E8A33D;
+    -webkit-transition: width 0.5s linear;
+    transition: width 0.5s linear;
   }
 
-  /* ---- Panel 2: bouncing visualizer ---- */
-  #panelVisualizer {
-    -webkit-box-pack: center;
-    justify-content: center;
-    -webkit-box-align: center;
-    align-items: center;
-  }
-  #visualizerLabel { position: absolute; top: 2.2vh; right: 1.8vw; }
-  #visualizer {
-    display: -webkit-box;
-    display: flex;
-    -webkit-box-align: end;
-    align-items: flex-end;
-    -webkit-box-pack: center;
-    justify-content: center;
-    height: 40%;
-    width: 70%;
-    gap: 5px;
-  }
-  #visualizer span {
-    display: block;
+  /* ---------- SECTION 2 : lyrics ---------- */
+  #sectionLyrics {
     -webkit-box-flex: 1;
     flex: 1;
-    max-width: 10px;
-    /* Full-height bar scaled down via transform rather than resizing.
-       Animating height forces a layout pass for every bar every frame,
-       which is what made this stutter on the old hardware; scaleY is
-       handled by the compositor instead. */
-    height: 100%;
-    -webkit-transform-origin: 50% 100%;
-    transform-origin: 50% 100%;
-    -webkit-transform: scaleY(0.12);
-    transform: scaleY(0.12);
-    background: #FFB238;
-    border-radius: 2px 2px 0 0;
-    opacity: 0.9;
-  }
-
-  /* ---- Panel 3: color palette ---- */
-  #panelPalette {
-    -webkit-box-pack: center;
-    justify-content: center;
-  }
-  #paletteList {
-    margin-top: 10px;
     display: -webkit-box;
     display: flex;
     -webkit-box-orient: vertical;
     flex-direction: column;
     -webkit-box-pack: center;
     justify-content: center;
-    -webkit-box-flex: 1;
-    flex: 1;
-  }
-  .swatchRow {
-    display: -webkit-box;
-    display: flex;
-    -webkit-box-align: center;
-    align-items: center;
-    padding: 5px 0;
-  }
-  .swatchChip {
-    width: 22px; height: 22px;
-    border-radius: 3px;
-    border: 1px solid rgba(255,255,255,0.15);
-    -webkit-box-flex: 0;
-    flex: none;
-  }
-  .swatchText { margin-left: 10px; overflow: hidden; }
-  .swatchName {
-    font-size: 12.5px;
-    color: #F4EFE6;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .swatchRole {
-    font-family: 'Space Mono', monospace;
-    font-size: 9.5px;
-    letter-spacing: 0.08em;
-    color: #948C7E;
-    text-transform: uppercase;
-    margin-top: 1px;
-  }
-
-  /* ---- Panel 4: lyrics (prev / current / next) ---- */
-  #panelLyrics {
-    -webkit-box-pack: center;
-    justify-content: center;
-  }
-  #lyricsTriplet {
-    margin-top: 10px;
     text-align: center;
-    -webkit-box-flex: 1;
-    flex: 1;
-    display: -webkit-box;
-    display: flex;
-    -webkit-box-orient: vertical;
-    flex-direction: column;
-    -webkit-box-pack: center;
-    justify-content: center;
+    border-top: 1px solid rgba(242,237,228,0.12);
+    margin-top: 3.2vh;
+    padding: 2.6vh 0;
+    overflow: hidden;
   }
-  .lyricLine {
-    color: rgba(255,178,56,0.32);
-    font-size: 13px;
-    line-height: 1.5;
-    padding: 3px 0;
-    max-height: 2.6em;
+
+  #lyricPrev, #lyricNext {
+    font-size: 14px;
+    line-height: 1.45;
+    color: rgba(242,237,228,0.34);
+    max-height: 2.9em;
     overflow: hidden;
   }
   #lyricCurrent {
-    color: #F4EFE6;
-    font-weight: 500;
-    font-size: clamp(15px, 2.4vw, 20px);
-    line-height: 1.4;
-    text-shadow: 0 0 16px rgba(255,178,56,0.55);
-    padding: 6px 0;
+    font-family: 'Instrument Serif', Georgia, serif;
+    font-size: 26px;
+    line-height: 1.3;
+    color: #FFFFFF;
+    margin: 1.5vh 0;
+    min-height: 1.3em;
   }
 
-  /* Crossfade for line changes. Each line fades down and out, text is
-     swapped while invisible, then it fades back up - so lyrics drift
-     upward as the song advances rather than popping. */
   #lyricPrev, #lyricCurrent, #lyricNext {
     opacity: 1;
     -webkit-transform: translateY(0);
@@ -322,17 +227,16 @@
     -webkit-transition: opacity 0.28s ease, -webkit-transform 0.28s ease;
     transition: opacity 0.28s ease, transform 0.28s ease;
   }
-  #lyricsTriplet.swapping #lyricPrev,
-  #lyricsTriplet.swapping #lyricCurrent,
-  #lyricsTriplet.swapping #lyricNext {
+  #lyricBlock.swapping #lyricPrev,
+  #lyricBlock.swapping #lyricCurrent,
+  #lyricBlock.swapping #lyricNext {
     opacity: 0;
     -webkit-transform: translateY(-10px);
     transform: translateY(-10px);
   }
-  /* Incoming state: start slightly low, then settle to neutral. */
-  #lyricsTriplet.entering #lyricPrev,
-  #lyricsTriplet.entering #lyricCurrent,
-  #lyricsTriplet.entering #lyricNext {
+  #lyricBlock.entering #lyricPrev,
+  #lyricBlock.entering #lyricCurrent,
+  #lyricBlock.entering #lyricNext {
     opacity: 0;
     -webkit-transform: translateY(10px);
     transform: translateY(10px);
@@ -340,8 +244,68 @@
     transition: none;
   }
 
+  /* ---------- SECTION 3 : palette strip ---------- */
+  #sectionPalette {
+    -webkit-box-flex: 0;
+    flex: none;
+    border-top: 1px solid rgba(242,237,228,0.12);
+    padding-top: 1.8vh;
+    padding-bottom: 2.4vh;
+  }
+  #paletteHead {
+    display: -webkit-box;
+    display: flex;
+    -webkit-box-pack: justify;
+    justify-content: space-between;
+    -webkit-box-align: baseline;
+    align-items: baseline;
+  }
+  #paletteCount {
+    font-family: 'Space Mono', monospace;
+    font-size: 9.5px;
+    letter-spacing: 0.18em;
+    color: rgba(242,237,228,0.4);
+    text-transform: uppercase;
+  }
+  #paletteStrip {
+    margin-top: 1.4vh;
+    display: -webkit-box;
+    display: flex;
+    -webkit-box-orient: horizontal;
+  }
+  .swatch {
+    -webkit-box-flex: 1;
+    flex: 1;
+    margin-right: 6px;
+  }
+  .swatch:last-child { margin-right: 0; }
+  .swatchBlock {
+    height: 34px;
+    border-radius: 1px;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.09);
+  }
+  .swatchName {
+    margin-top: 6px;
+    font-size: 9.5px;
+    line-height: 1.25;
+    color: rgba(242,237,228,0.78);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .swatchHex {
+    margin-top: 1px;
+    font-family: 'Space Mono', monospace;
+    font-size: 8.5px;
+    letter-spacing: 0.04em;
+    color: rgba(242,237,228,0.38);
+    text-transform: uppercase;
+  }
+
+  /* ---------- idle ---------- */
   #idle {
     position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: #14110E;
     display: -webkit-box;
     display: flex;
     -webkit-box-orient: vertical;
@@ -350,21 +314,33 @@
     align-items: center;
     -webkit-box-pack: center;
     justify-content: center;
-    background: #15120F;
   }
-  #idle .idleLabel {
+  #idleTitle {
+    font-family: 'Instrument Serif', Georgia, serif;
+    font-style: italic;
+    font-size: 30px;
+    color: rgba(242,237,228,0.85);
+  }
+  #idleSub {
+    margin-top: 10px;
     font-family: 'Space Mono', monospace;
+    font-size: 10px;
     letter-spacing: 0.3em;
-    font-size: 12px;
-    color: #FFB238;
     text-transform: uppercase;
+    color: #E8A33D;
   }
-  #idle .idleSub { margin-top: 10px; color: #948C7E; font-size: 14px; }
+
+  /* Landscape: art and identity side by side, lyrics below */
+  @media (orientation: landscape) and (min-aspect-ratio: 5/4) {
+    #stage { padding: 4vh 5vw 0; }
+    #artStack { width: 26vw; max-width: 210px; }
+    #title { font-size: 26px; }
+    #lyricCurrent { font-size: 24px; }
+    .swatchBlock { height: 26px; }
+  }
 
   @media (prefers-reduced-motion: reduce) {
     #record { -webkit-animation: none; animation: none; }
-    /* Bars are driven by JS transforms now, so the script checks this
-       preference directly and holds them at rest instead. */
   }
 </style>
 <style id="themeOverride"></style>
@@ -372,53 +348,48 @@
 <body>
 
 <div id="backdrop"></div>
-<div id="vignette"></div>
+<div id="scrim"></div>
+<div id="grain"></div>
 
 <div id="stage" style="display:none;">
-  <div class="row">
-    <div class="panel" id="panelNowPlaying" style="position:relative;">
-      <div class="eyebrow">Now Playing</div>
-      <div class="vinylWrap">
-        <div class="spacer"></div>
-        <div id="record"><div class="recordLabel"></div></div>
-        <div id="artFrame" style="position:absolute; top:0; left:0;"><img id="art" src="" alt=""></div>
-      </div>
-      <div id="title"></div>
-      <div id="artist"></div>
-      <div id="transport">
-        <span id="elapsed">0:00</span>
-        <div id="progressTrack"><div id="progressFill"></div></div>
-        <span id="total">0:00</span>
-      </div>
+
+  <div id="sectionArt">
+    <div class="kicker">Now Playing</div>
+    <div id="artStack">
+      <div id="artRatio"></div>
+      <div id="record"><div id="recordLabel"></div></div>
+      <div id="artFrame"><img id="art" src="" alt=""></div>
     </div>
-    <div class="panel" id="panelVisualizer" style="position:relative;">
-      <div class="eyebrow" id="visualizerLabel">Level</div>
-      <div id="visualizer">
-        <span></span><span></span><span></span><span></span><span></span>
-        <span></span><span></span><span></span><span></span><span></span>
-        <span></span><span></span><span></span><span></span>
-      </div>
+    <div id="title"></div>
+    <div id="artist"></div>
+    <div id="transport">
+      <span id="elapsed">0:00</span>
+      <div id="progressTrack"><div id="progressFill"></div></div>
+      <span id="total">0:00</span>
     </div>
   </div>
-  <div class="row">
-    <div class="panel" id="panelPalette">
-      <div class="eyebrow">Palette</div>
-      <div id="paletteList"></div>
-    </div>
-    <div class="panel" id="panelLyrics">
-      <div class="eyebrow">Lyrics</div>
-      <div id="lyricsTriplet">
-        <div class="lyricLine" id="lyricPrev"></div>
-        <div id="lyricCurrent"></div>
-        <div class="lyricLine" id="lyricNext"></div>
-      </div>
+
+  <div id="sectionLyrics">
+    <div id="lyricBlock">
+      <div id="lyricPrev"></div>
+      <div id="lyricCurrent"></div>
+      <div id="lyricNext"></div>
     </div>
   </div>
+
+  <div id="sectionPalette">
+    <div id="paletteHead">
+      <span class="kicker">Palette</span>
+      <span id="paletteCount"></span>
+    </div>
+    <div id="paletteStrip"></div>
+  </div>
+
 </div>
 
 <div id="idle">
-  <div class="idleLabel">Standby</div>
-  <div class="idleSub">Nothing playing right now</div>
+  <div id="idleTitle">Silence</div>
+  <div id="idleSub">Standby</div>
 </div>
 
 <script>
@@ -430,7 +401,7 @@
   var baseServerTime = 0;
   var durationMs = 0;
   var isPlaying = false;
-  var lastActiveIdx = null;
+  var lastActiveIdx = -1;
   var lyricSwapTimer = null;
   var lyricEnterTimer = null;
 
@@ -482,44 +453,6 @@
     el.appendChild(document.createTextNode(text || ''));
   }
 
-  function renderPalette(swatches) {
-    var list = document.getElementById('paletteList');
-    list.innerHTML = '';
-    if (!swatches || !swatches.length) {
-      var empty = document.createElement('div');
-      empty.className = 'swatchRole';
-      empty.appendChild(document.createTextNode('No palette available'));
-      list.appendChild(empty);
-      return;
-    }
-    for (var i = 0; i < swatches.length; i++) {
-      var sw = swatches[i];
-      var row = document.createElement('div');
-      row.className = 'swatchRow';
-
-      var chip = document.createElement('div');
-      chip.className = 'swatchChip';
-      chip.style.backgroundColor = sw.hex;
-
-      var textWrap = document.createElement('div');
-      textWrap.className = 'swatchText';
-
-      var nameEl = document.createElement('div');
-      nameEl.className = 'swatchName';
-      nameEl.appendChild(document.createTextNode(sw.name));
-
-      var roleEl = document.createElement('div');
-      roleEl.className = 'swatchRole';
-      roleEl.appendChild(document.createTextNode(sw.role + ' \u00B7 ' + sw.hex));
-
-      textWrap.appendChild(nameEl);
-      textWrap.appendChild(roleEl);
-      row.appendChild(chip);
-      row.appendChild(textWrap);
-      list.appendChild(row);
-    }
-  }
-
   function hexToRgb(hex) {
     var clean = hex.replace('#', '');
     return {
@@ -533,9 +466,8 @@
     return 'rgba(' + c.r + ',' + c.g + ',' + c.b + ',' + alpha + ')';
   }
 
-  // Injects a plain-hex-value stylesheet (no var()) so the whole page
-  // recolors itself per track without relying on CSS custom properties,
-  // which the target WebView doesn't support.
+  // Injects a plain-hex stylesheet (no var()) so the page recolours per
+  // track without CSS custom properties, unsupported on this WebView.
   function applyTheme(theme) {
     var styleEl = document.getElementById('themeOverride');
     if (!theme) { styleEl.textContent = ''; return; }
@@ -543,25 +475,103 @@
     var css =
       'html, body { background: ' + theme.void + '; }' +
       '#idle { background: ' + theme.void + '; }' +
-      '.panel { background: ' + theme.panel + '; border-color: ' + hexToRgba(accent, 0.28) + '; }' +
-      '#artFrame { border-color: ' + hexToRgba(accent, 0.28) + '; }' +
-      '.eyebrow, #elapsed, #idle .idleLabel { color: ' + accent + '; }' +
-      '#progressFill { background: ' + accent + '; box-shadow: 0 0 8px ' + hexToRgba(accent, 0.55) + '; }' +
-      '#progressTrack { background: ' + hexToRgba(accent, 0.2) + '; }' +
-      '.recordLabel { background: ' + accent + '; }' +
-      '#lyricCurrent { text-shadow: 0 0 16px ' + hexToRgba(accent, 0.55) + '; }' +
-      '.lyricLine { color: ' + hexToRgba(accent, 0.35) + '; }' +
-      '#visualizer span { background: ' + accent + '; }';
+      '#scrim { background: linear-gradient(180deg, ' + hexToRgba(theme.void, 0.55) + ' 0%, ' +
+        hexToRgba(theme.void, 0.28) + ' 38%, ' + hexToRgba(theme.void, 0.82) + ' 100%); }' +
+      '.kicker, #elapsed, #idleSub { color: ' + accent + '; }' +
+      '#progressFill { background: ' + accent + '; }' +
+      '#recordLabel { background: ' + accent + '; }' +
+      '#sectionLyrics, #sectionPalette { border-top-color: ' + hexToRgba(accent, 0.22) + '; }' +
+      '#lyricPrev, #lyricNext { color: ' + hexToRgba(accent, 0.42) + '; }';
     styleEl.textContent = css;
+  }
+
+  function renderPalette(swatches) {
+    var strip = document.getElementById('paletteStrip');
+    var count = document.getElementById('paletteCount');
+    strip.innerHTML = '';
+    if (!swatches || !swatches.length) {
+      setText(count, 'unavailable');
+      return;
+    }
+    setText(count, swatches.length + ' tones');
+    for (var i = 0; i < swatches.length; i++) {
+      var sw = swatches[i];
+      var cell = document.createElement('div');
+      cell.className = 'swatch';
+
+      var block = document.createElement('div');
+      block.className = 'swatchBlock';
+      block.style.backgroundColor = sw.hex;
+
+      var name = document.createElement('div');
+      name.className = 'swatchName';
+      name.appendChild(document.createTextNode(sw.name));
+
+      var hex = document.createElement('div');
+      hex.className = 'swatchHex';
+      hex.appendChild(document.createTextNode(sw.hex));
+
+      cell.appendChild(block);
+      cell.appendChild(name);
+      cell.appendChild(hex);
+      strip.appendChild(cell);
+    }
+  }
+
+  function lineTextAt(idx) {
+    if (idx < 0 || idx >= syncedLines.length) return '';
+    return syncedLines[idx].text;
+  }
+
+  function writeLyricTriplet(activeIdx) {
+    var prevEl = document.getElementById('lyricPrev');
+    var currEl = document.getElementById('lyricCurrent');
+    var nextEl = document.getElementById('lyricNext');
+
+    if (activeIdx < 0) {
+      // Intro: nothing sung yet, so nothing is highlighted. The opening
+      // line waits dimmed in the "next" slot.
+      setText(prevEl, '');
+      setText(currEl, '');
+      setText(nextEl, lineTextAt(0));
+      return;
+    }
+    setText(prevEl, lineTextAt(activeIdx - 1));
+    setText(currEl, lineTextAt(activeIdx));
+    setText(nextEl, lineTextAt(activeIdx + 1));
+  }
+
+  function showLyricLines(activeIdx, animate) {
+    var block = document.getElementById('lyricBlock');
+
+    if (!animate) {
+      block.className = '';
+      writeLyricTriplet(activeIdx);
+      return;
+    }
+
+    // Fade out, swap while invisible, fade back in from below. Timeouts
+    // rather than transitionend, which fires unreliably here when several
+    // elements transition together.
+    if (lyricSwapTimer) { clearTimeout(lyricSwapTimer); }
+    if (lyricEnterTimer) { clearTimeout(lyricEnterTimer); }
+
+    block.className = 'swapping';
+    lyricSwapTimer = setTimeout(function () {
+      writeLyricTriplet(activeIdx);
+      block.className = 'entering';
+      lyricEnterTimer = setTimeout(function () {
+        block.className = '';
+      }, 20);
+    }, 280);
   }
 
   function currentEstimatedProgress() {
     if (!isPlaying) return baseProgressMs;
-    var elapsed = Date.now() - baseServerTime;
-    return baseProgressMs + elapsed;
+    return baseProgressMs + (Date.now() - baseServerTime);
   }
 
-  function updateHighlight() {
+  function tick() {
     var pos = currentEstimatedProgress();
 
     if (durationMs > 0) {
@@ -577,143 +587,9 @@
       if (syncedLines[i].time <= pos) activeIdx = i;
       else break;
     }
-
-    // Only touch the DOM when the line actually changes - otherwise the
-    // 500ms tick would restart the animation constantly.
     if (activeIdx === lastActiveIdx) return;
     lastActiveIdx = activeIdx;
     showLyricLines(activeIdx, true);
-  }
-
-  function lineTextAt(idx) {
-    if (idx < 0 || idx >= syncedLines.length) return '';
-    return syncedLines[idx].text;
-  }
-
-  function writeLyricTriplet(activeIdx) {
-    var prevEl = document.getElementById('lyricPrev');
-    var currEl = document.getElementById('lyricCurrent');
-    var nextEl = document.getElementById('lyricNext');
-
-    if (activeIdx < 0) {
-      // Intro: playback hasn't reached the first timestamped line yet.
-      // Nothing is being sung, so nothing gets the highlight - show the
-      // upcoming line dimmed in the "next" slot instead.
-      setText(prevEl, '');
-      setText(currEl, '');
-      setText(nextEl, lineTextAt(0));
-      return;
-    }
-
-    setText(prevEl, lineTextAt(activeIdx - 1));
-    setText(currEl, lineTextAt(activeIdx));
-    setText(nextEl, lineTextAt(activeIdx + 1));
-  }
-
-  function showLyricLines(activeIdx, animate) {
-    var triplet = document.getElementById('lyricsTriplet');
-
-    if (!animate) {
-      triplet.className = '';
-      writeLyricTriplet(activeIdx);
-      return;
-    }
-
-    // Fade/slide out, swap text while invisible, then fade back in from
-    // below. Timeouts are used rather than transitionend because the old
-    // WebView fires that event inconsistently when several elements
-    // transition at once.
-    if (lyricSwapTimer) { clearTimeout(lyricSwapTimer); }
-    if (lyricEnterTimer) { clearTimeout(lyricEnterTimer); }
-
-    triplet.className = 'swapping';
-
-    lyricSwapTimer = setTimeout(function () {
-      writeLyricTriplet(activeIdx);
-      // Jump to the "entering" position with transitions off...
-      triplet.className = 'entering';
-      // ...then next frame, release to neutral so it animates in.
-      lyricEnterTimer = setTimeout(function () {
-        triplet.className = '';
-      }, 20);
-    }, 280);
-  }
-
-  // --- Visualizer -------------------------------------------------------
-  // Each bar keeps its own level and eases toward a target rather than
-  // teleporting to a new random value, which is what made it look choppy.
-  // Motion is two sine waves at different rates (so bars don't move in
-  // lockstep) blended with a slowly drifting random target for variation.
-  var barState = [];
-  var prefersReducedMotion = !!(window.matchMedia &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-
-  function initVisualizer() {
-    var bars = document.getElementById('visualizer').getElementsByTagName('span');
-    for (var i = 0; i < bars.length; i++) {
-      barState.push({
-        el: bars[i],
-        level: 0.12,
-        target: 0.3 + Math.random() * 0.4,
-        // Per-bar frequencies/phases so neighbours drift out of sync
-        freqA: 1.1 + Math.random() * 1.6,
-        freqB: 2.3 + Math.random() * 2.4,
-        phase: Math.random() * Math.PI * 2,
-        nextRetarget: 0
-      });
-    }
-  }
-
-  function renderVisualizer(nowMs) {
-    var t = nowMs / 1000;
-    for (var i = 0; i < barState.length; i++) {
-      var b = barState[i];
-
-      if (isPlaying && !prefersReducedMotion) {
-        // Drift the random target occasionally instead of every frame
-        if (nowMs > b.nextRetarget) {
-          b.target = 0.18 + Math.random() * 0.8;
-          b.nextRetarget = nowMs + 180 + Math.random() * 320;
-        }
-        var wave =
-          0.5 + 0.28 * Math.sin(t * b.freqA + b.phase)
-              + 0.16 * Math.sin(t * b.freqB + b.phase * 1.7);
-        var desired = (wave * 0.6) + (b.target * 0.4);
-        if (desired < 0.08) desired = 0.08;
-        if (desired > 1) desired = 1;
-        // Ease toward the desired level - the smoothing is what removes
-        // the stutter; higher factor = snappier, lower = more fluid.
-        b.level += (desired - b.level) * 0.18;
-      } else {
-        b.level += (0.1 - b.level) * 0.12;
-      }
-
-      var v = Math.round(b.level * 1000) / 1000;
-      b.el.style.webkitTransform = 'scaleY(' + v + ')';
-      b.el.style.transform = 'scaleY(' + v + ')';
-    }
-  }
-
-  // rAF where available (smooth, throttles when offscreen), otherwise a
-  // timer. Android 4.4's WebView has the webkit-prefixed version.
-  var rafFn = window.requestAnimationFrame ||
-              window.webkitRequestAnimationFrame ||
-              null;
-
-  function visualizerLoop() {
-    renderVisualizer(Date.now());
-    if (rafFn) {
-      rafFn(visualizerLoop);
-    }
-  }
-
-  function startVisualizer() {
-    initVisualizer();
-    if (rafFn) {
-      rafFn(visualizerLoop);
-    } else {
-      setInterval(function () { renderVisualizer(Date.now()); }, 33);
-    }
   }
 
   function poll() {
@@ -730,22 +606,20 @@
 
       var key = data.artist + '::' + data.title;
       isPlaying = data.isPlaying;
-      var networkCompensationMs = isPlaying ? Math.round((roundTripMs || 0) / 2) : 0;
-      baseProgressMs = data.progressMs + networkCompensationMs;
+      var netComp = isPlaying ? Math.round((roundTripMs || 0) / 2) : 0;
+      baseProgressMs = data.progressMs + netComp;
       baseServerTime = Date.now();
       durationMs = data.durationMs || 0;
 
-      var recordEl = document.getElementById('record');
-      recordEl.className = isPlaying ? 'spinning' : '';
+      document.getElementById('record').className = isPlaying ? 'spinning' : '';
 
       if (key !== lastTrackKey) {
         lastTrackKey = key;
         setText(document.getElementById('title'), data.title);
         setText(document.getElementById('artist'), data.artist);
         document.getElementById('art').src = data.albumArt || '';
-
-        var backdropEl = document.getElementById('backdrop');
-        backdropEl.style.backgroundImage = data.albumArt ? 'url(' + data.albumArt + ')' : 'none';
+        document.getElementById('backdrop').style.backgroundImage =
+          data.albumArt ? 'url(' + data.albumArt + ')' : 'none';
 
         if (data.lyrics && data.lyrics.synced) {
           syncedLines = parseLRC(data.lyrics.synced);
@@ -755,8 +629,6 @@
           syncedLines = [{ time: 0, text: '(no lyrics found)' }];
         }
 
-        // New track: clear any in-flight fade and render the intro state
-        // straight away, so the switch isn't stuck mid-animation.
         if (lyricSwapTimer) { clearTimeout(lyricSwapTimer); lyricSwapTimer = null; }
         if (lyricEnterTimer) { clearTimeout(lyricEnterTimer); lyricEnterTimer = null; }
         lastActiveIdx = -1;
@@ -774,8 +646,7 @@
   }
 
   setInterval(poll, POLL_MS);
-  setInterval(updateHighlight, 500);
-  startVisualizer();
+  setInterval(tick, 500);
   poll();
 })();
 </script>
