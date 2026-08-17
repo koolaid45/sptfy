@@ -117,14 +117,23 @@ app.get('/api/now-playing', async (req, res) => {
     const title = track.name;
     const album = track.album ? track.album.name : '';
     const durationMs = track.duration_ms;
-    const progressMs = data.progress_ms;
+    const rawProgressMs = data.progress_ms;
     const isPlaying = data.is_playing;
     const albumArt =
       track.album && track.album.images && track.album.images[0]
         ? track.album.images[0].url
         : null;
 
+    // rawProgressMs reflects playback position at the moment Spotify answered.
+    // fetchLyrics() below can take a while on an uncached lookup (new track),
+    // so we time it and add that gap back in before responding - otherwise
+    // the position we hand the client is already stale by however long the
+    // lyrics lookup took, which shows up as "offset lyrics" right after a
+    // track change.
+    const beforeLyricsFetch = Date.now();
     const lyrics = await fetchLyrics(artist, title, album, durationMs / 1000);
+    const lyricsFetchDurationMs = Date.now() - beforeLyricsFetch;
+    const progressMs = isPlaying ? rawProgressMs + lyricsFetchDurationMs : rawProgressMs;
 
     res.json({
       playing: true,
