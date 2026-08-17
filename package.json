@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "express": "^4.19.2",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "node-vibrant": "^3.2.1"
   }
 }
