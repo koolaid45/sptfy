@@ -217,12 +217,18 @@
     -webkit-box-flex: 1;
     flex: 1;
     max-width: 10px;
-    height: 12%;
+    /* Full-height bar scaled down via transform rather than resizing.
+       Animating height forces a layout pass for every bar every frame,
+       which is what made this stutter on the old hardware; scaleY is
+       handled by the compositor instead. */
+    height: 100%;
+    -webkit-transform-origin: 50% 100%;
+    transform-origin: 50% 100%;
+    -webkit-transform: scaleY(0.12);
+    transform: scaleY(0.12);
     background: #FFB238;
     border-radius: 2px 2px 0 0;
     opacity: 0.9;
-    -webkit-transition: height 0.16s ease;
-    transition: height 0.16s ease;
   }
 
   /* ---- Panel 3: color palette ---- */
@@ -357,7 +363,8 @@
 
   @media (prefers-reduced-motion: reduce) {
     #record { -webkit-animation: none; animation: none; }
-    #visualizer span { -webkit-transition: none; transition: none; }
+    /* Bars are driven by JS transforms now, so the script checks this
+       preference directly and holds them at rest instead. */
   }
 </style>
 <style id="themeOverride"></style>
@@ -417,7 +424,6 @@
 <script>
 (function () {
   var POLL_MS = 4000;
-  var VISUALIZER_MS = 160;
   var lastTrackKey = null;
   var syncedLines = [];
   var baseProgressMs = 0;
@@ -585,10 +591,23 @@
   }
 
   function writeLyricTriplet(activeIdx) {
-    var currIdx = activeIdx >= 0 ? activeIdx : 0;
-    setText(document.getElementById('lyricPrev'), lineTextAt(currIdx - 1));
-    setText(document.getElementById('lyricCurrent'), lineTextAt(currIdx));
-    setText(document.getElementById('lyricNext'), lineTextAt(currIdx + 1));
+    var prevEl = document.getElementById('lyricPrev');
+    var currEl = document.getElementById('lyricCurrent');
+    var nextEl = document.getElementById('lyricNext');
+
+    if (activeIdx < 0) {
+      // Intro: playback hasn't reached the first timestamped line yet.
+      // Nothing is being sung, so nothing gets the highlight - show the
+      // upcoming line dimmed in the "next" slot instead.
+      setText(prevEl, '');
+      setText(currEl, '');
+      setText(nextEl, lineTextAt(0));
+      return;
+    }
+
+    setText(prevEl, lineTextAt(activeIdx - 1));
+    setText(currEl, lineTextAt(activeIdx));
+    setText(nextEl, lineTextAt(activeIdx + 1));
   }
 
   function showLyricLines(activeIdx, animate) {
@@ -620,15 +639,80 @@
     }, 280);
   }
 
-  function bounceVisualizer() {
+  // --- Visualizer -------------------------------------------------------
+  // Each bar keeps its own level and eases toward a target rather than
+  // teleporting to a new random value, which is what made it look choppy.
+  // Motion is two sine waves at different rates (so bars don't move in
+  // lockstep) blended with a slowly drifting random target for variation.
+  var barState = [];
+  var prefersReducedMotion = !!(window.matchMedia &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+  function initVisualizer() {
     var bars = document.getElementById('visualizer').getElementsByTagName('span');
     for (var i = 0; i < bars.length; i++) {
-      if (isPlaying) {
-        var h = 15 + Math.random() * 85;
-        bars[i].style.height = h + '%';
+      barState.push({
+        el: bars[i],
+        level: 0.12,
+        target: 0.3 + Math.random() * 0.4,
+        // Per-bar frequencies/phases so neighbours drift out of sync
+        freqA: 1.1 + Math.random() * 1.6,
+        freqB: 2.3 + Math.random() * 2.4,
+        phase: Math.random() * Math.PI * 2,
+        nextRetarget: 0
+      });
+    }
+  }
+
+  function renderVisualizer(nowMs) {
+    var t = nowMs / 1000;
+    for (var i = 0; i < barState.length; i++) {
+      var b = barState[i];
+
+      if (isPlaying && !prefersReducedMotion) {
+        // Drift the random target occasionally instead of every frame
+        if (nowMs > b.nextRetarget) {
+          b.target = 0.18 + Math.random() * 0.8;
+          b.nextRetarget = nowMs + 180 + Math.random() * 320;
+        }
+        var wave =
+          0.5 + 0.28 * Math.sin(t * b.freqA + b.phase)
+              + 0.16 * Math.sin(t * b.freqB + b.phase * 1.7);
+        var desired = (wave * 0.6) + (b.target * 0.4);
+        if (desired < 0.08) desired = 0.08;
+        if (desired > 1) desired = 1;
+        // Ease toward the desired level - the smoothing is what removes
+        // the stutter; higher factor = snappier, lower = more fluid.
+        b.level += (desired - b.level) * 0.18;
       } else {
-        bars[i].style.height = '10%';
+        b.level += (0.1 - b.level) * 0.12;
       }
+
+      var v = Math.round(b.level * 1000) / 1000;
+      b.el.style.webkitTransform = 'scaleY(' + v + ')';
+      b.el.style.transform = 'scaleY(' + v + ')';
+    }
+  }
+
+  // rAF where available (smooth, throttles when offscreen), otherwise a
+  // timer. Android 4.4's WebView has the webkit-prefixed version.
+  var rafFn = window.requestAnimationFrame ||
+              window.webkitRequestAnimationFrame ||
+              null;
+
+  function visualizerLoop() {
+    renderVisualizer(Date.now());
+    if (rafFn) {
+      rafFn(visualizerLoop);
+    }
+  }
+
+  function startVisualizer() {
+    initVisualizer();
+    if (rafFn) {
+      rafFn(visualizerLoop);
+    } else {
+      setInterval(function () { renderVisualizer(Date.now()); }, 33);
     }
   }
 
@@ -671,11 +755,11 @@
           syncedLines = [{ time: 0, text: '(no lyrics found)' }];
         }
 
-        // New track: clear any in-flight fade and render the opening lines
+        // New track: clear any in-flight fade and render the intro state
         // straight away, so the switch isn't stuck mid-animation.
         if (lyricSwapTimer) { clearTimeout(lyricSwapTimer); lyricSwapTimer = null; }
         if (lyricEnterTimer) { clearTimeout(lyricEnterTimer); lyricEnterTimer = null; }
-        lastActiveIdx = null;
+        lastActiveIdx = -1;
         showLyricLines(-1, false);
 
         if (data.palette) {
@@ -691,7 +775,7 @@
 
   setInterval(poll, POLL_MS);
   setInterval(updateHighlight, 500);
-  setInterval(bounceVisualizer, VISUALIZER_MS);
+  startVisualizer();
   poll();
 })();
 </script>
