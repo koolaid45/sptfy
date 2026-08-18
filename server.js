@@ -1,7 +1,20 @@
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
-const Vibrant = require('node-vibrant');
+
+// node-vibrant powers album-art palette extraction. It's a nice-to-have,
+// not core to showing the track, so a missing/broken install degrades to
+// "no palette" rather than taking down the whole server.
+let Vibrant = null;
+try {
+  Vibrant = require('node-vibrant');
+} catch (err) {
+  console.warn(
+    'node-vibrant not available - palette extraction disabled. ' +
+    'Run `npm install` to enable it. Reason:',
+    err.message
+  );
+}
 
 const app = express();
 
@@ -140,6 +153,7 @@ function darken(hex, factor) {
 const paletteCache = new Map();
 
 async function extractPalette(albumArtUrl) {
+  if (!Vibrant) return null;
   if (!albumArtUrl) return null;
   if (paletteCache.has(albumArtUrl)) return paletteCache.get(albumArtUrl);
 
@@ -280,94 +294,166 @@ async function spotifyFetch(url) {
   return res;
 }
 
+// ---------------------------------------------------------------------------
+// Shared now-playing snapshot.
+//
+// Clients must never trigger Spotify calls directly: several devices/tabs
+// polling at once would multiply request volume and trip Spotify's rate
+// limit (429 QUOTA_EXCEEDED). Instead the server refreshes one snapshot on
+// a fixed minimum interval and every client reads that same cached copy.
+// ---------------------------------------------------------------------------
+const MIN_REFRESH_MS = 5000;       // never call Spotify more often than this
+const MAX_BACKOFF_MS = 5 * 60000;  // ceiling when repeatedly rate limited
+
+let snapshot = { playing: false, reason: 'starting_up' };
+let snapshotTakenAt = 0;
+let refreshInFlight = null;
+let backoffUntil = 0;
+let consecutiveRateLimits = 0;
+
+async function buildSnapshot() {
+  // additional_types=episode so podcasts don't come back as an empty
+  // item and look identical to "nothing playing".
+  const npUrl =
+    'https://api.spotify.com/v1/me/player/currently-playing?additional_types=track,episode';
+  const npRes = await spotifyFetch(npUrl);
+
+  if (npRes.status === 429) {
+    // Honour Spotify's Retry-After (seconds). Back off hard - hammering
+    // through a 429 is what extends the penalty window.
+    const retryAfterSec = parseInt(npRes.headers.get('retry-after') || '0', 10);
+    consecutiveRateLimits++;
+    const waitMs = Math.min(
+      Math.max(retryAfterSec * 1000, MIN_REFRESH_MS * Math.pow(2, consecutiveRateLimits)),
+      MAX_BACKOFF_MS
+    );
+    backoffUntil = Date.now() + waitMs;
+    console.warn(`Rate limited by Spotify. Backing off ${Math.round(waitMs / 1000)}s.`);
+    return {
+      playing: false,
+      reason: 'rate_limited',
+      retryInSec: Math.round(waitMs / 1000)
+    };
+  }
+
+  consecutiveRateLimits = 0;
+  let data = null;
+
+  if (npRes.ok) {
+    const text = await npRes.text();
+    if (text) {
+      try { data = JSON.parse(text); } catch (e) { data = null; }
+    }
+  } else if (npRes.status !== 204 && npRes.status !== 202) {
+    const text = await npRes.text();
+    return {
+      playing: false,
+      reason: 'spotify_error',
+      detail: text.slice(0, 300)
+    };
+  }
+
+  // NOTE: the /me/player fallback that used to live here was removed - it
+  // doubled request volume on every empty response, which contributed to
+  // hitting the rate limit in the first place. A 204 is now simply treated
+  // as "nothing playing"; the client tolerates brief gaps on its own.
+  if (!data || !data.item) {
+    return { playing: false, reason: 'nothing_playing' };
+  }
+
+  const track = data.item;
+  const artist = Array.isArray(track.artists) && track.artists.length
+    ? track.artists.map((a) => a.name).join(', ')
+    : (track.show ? track.show.name : 'Unknown');
+  const title = track.name;
+  const album = track.album ? track.album.name : (track.show ? track.show.name : '');
+  const durationMs = track.duration_ms;
+  const rawProgressMs = data.progress_ms;
+  const isPlaying = data.is_playing;
+  const images = (track.album && track.album.images) ||
+                 (track.show && track.show.images) || [];
+  const albumArt = images.length ? images[0].url : null;
+
+  const beforeProcessing = Date.now();
+  const [lyrics, palette] = await Promise.all([
+    fetchLyrics(artist, title, album, durationMs / 1000),
+    extractPalette(albumArt)
+  ]);
+  const processingDurationMs = Date.now() - beforeProcessing;
+  const progressMs = isPlaying ? rawProgressMs + processingDurationMs : rawProgressMs;
+
+  return {
+    playing: true,
+    isPlaying,
+    artist,
+    title,
+    album,
+    albumArt,
+    durationMs,
+    progressMs,
+    lyrics,
+    palette
+  };
+}
+
+async function getSnapshot() {
+  const now = Date.now();
+
+  // Serving stale data during a backoff is far better than compounding a
+  // rate limit with more requests.
+  if (now < backoffUntil) return snapshot;
+
+  // Fresh enough - reuse.
+  if (now - snapshotTakenAt < MIN_REFRESH_MS) return snapshot;
+
+  // Collapse concurrent requests onto a single in-flight refresh, so ten
+  // clients arriving together still produce exactly one Spotify call.
+  if (refreshInFlight) return refreshInFlight;
+
+  refreshInFlight = (async () => {
+    try {
+      const next = await buildSnapshot();
+      snapshot = next;
+      snapshotTakenAt = Date.now();
+    } catch (err) {
+      console.error('Snapshot refresh failed:', err);
+      snapshot = {
+        playing: false,
+        reason: 'server_error',
+        detail: String(err).slice(0, 300)
+      };
+      snapshotTakenAt = Date.now();
+    } finally {
+      refreshInFlight = null;
+    }
+    return snapshot;
+  })();
+
+  return refreshInFlight;
+}
+
 app.get('/api/now-playing', async (req, res) => {
   try {
-    // additional_types=episode so podcasts don't come back as an empty
-    // item and look identical to "nothing playing".
-    const npUrl =
-      'https://api.spotify.com/v1/me/player/currently-playing?additional_types=track,episode';
-    let npRes = await spotifyFetch(npUrl);
-    let data = null;
+    const snap = await getSnapshot();
+    const ageMs = Date.now() - snapshotTakenAt;
 
-    if (npRes.ok) {
-      const text = await npRes.text();
-      if (text) {
-        try { data = JSON.parse(text); } catch (e) { data = null; }
-      }
-    } else if (npRes.status !== 204 && npRes.status !== 202) {
-      const text = await npRes.text();
-      // Surface as a transient problem rather than "stopped", so the
-      // display keeps showing the last known track instead of blanking.
-      return res
-        .status(502)
-        .json({ playing: false, reason: 'spotify_error', detail: text.slice(0, 300) });
+    // Advance the reported position by the snapshot's age so cached data
+    // doesn't make playback appear to lag behind.
+    const payload = Object.assign({}, snap, { serverTime: Date.now() });
+    if (snap.playing && snap.isPlaying && typeof snap.progressMs === 'number') {
+      let adjusted = snap.progressMs + ageMs;
+      if (snap.durationMs && adjusted > snap.durationMs) adjusted = snap.durationMs;
+      payload.progressMs = adjusted;
     }
 
-    // currently-playing returns 204 in situations where playback is
-    // actually still active (device handoff, track transition). Fall back
-    // to the fuller player-state endpoint before concluding it stopped.
-    if (!data || !data.item) {
-      const stateRes = await spotifyFetch(
-        'https://api.spotify.com/v1/me/player?additional_types=track,episode'
-      );
-      if (stateRes.ok) {
-        const stateText = await stateRes.text();
-        if (stateText) {
-          try {
-            const stateData = JSON.parse(stateText);
-            if (stateData && stateData.item) data = stateData;
-          } catch (e) { /* ignore */ }
-        }
-      }
-    }
-
-    if (!data || !data.item) {
-      return res.json({ playing: false, reason: 'nothing_playing' });
-    }
-
-    const track = data.item;
-    const artist = Array.isArray(track.artists) && track.artists.length
-      ? track.artists.map((a) => a.name).join(', ')
-      : (track.show ? track.show.name : 'Unknown');
-    const title = track.name;
-    const album = track.album ? track.album.name : (track.show ? track.show.name : '');
-    const durationMs = track.duration_ms;
-    const rawProgressMs = data.progress_ms;
-    const isPlaying = data.is_playing;
-    const images = (track.album && track.album.images) ||
-                   (track.show && track.show.images) || [];
-    const albumArt = images.length ? images[0].url : null;
-
-    // rawProgressMs reflects playback position at the moment Spotify answered.
-    // fetchLyrics()/extractPalette() below can take a while on an uncached
-    // lookup (new track), so we time the combined work and add that gap back
-    // in before responding - otherwise the position we hand the client is
-    // already stale, which shows up as "offset lyrics" right after a track
-    // change.
-    const beforeProcessing = Date.now();
-    const [lyrics, palette] = await Promise.all([
-      fetchLyrics(artist, title, album, durationMs / 1000),
-      extractPalette(albumArt)
-    ]);
-    const processingDurationMs = Date.now() - beforeProcessing;
-    const progressMs = isPlaying ? rawProgressMs + processingDurationMs : rawProgressMs;
-
-    res.json({
-      playing: true,
-      isPlaying,
-      artist,
-      title,
-      album,
-      albumArt,
-      durationMs,
-      progressMs,
-      serverTime: Date.now(),
-      lyrics,
-      palette
-    });
+    res.json(payload);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ playing: false, reason: 'server_error', detail: String(err).slice(0, 300) });
+    res.status(500).json({
+      playing: false,
+      reason: 'server_error',
+      detail: String(err).slice(0, 300)
+    });
   }
 });
 
