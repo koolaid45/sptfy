@@ -388,13 +388,19 @@
 </div>
 
 <div id="idle">
-  <div id="idleTitle">Nothing playing</div>
+  <div id="idleTitle">Silence</div>
   <div id="idleSub">Standby</div>
 </div>
 
 <script>
 (function () {
   var POLL_MS = 4000;
+  // How many consecutive bad polls before giving up and showing Standby.
+  // Errors get more patience than a clean "nothing playing" response,
+  // since errors are far more likely to be temporary.
+  var TRANSIENT_TOLERANCE = 5;   // ~20s of failures
+  var STOPPED_TOLERANCE = 2;     // ~8s of confirmed silence
+  var consecutiveMisses = 0;
   var lastTrackKey = null;
   var syncedLines = [];
   var baseProgressMs = 0;
@@ -568,7 +574,11 @@
 
   function currentEstimatedProgress() {
     if (!isPlaying) return baseProgressMs;
-    return baseProgressMs + (Date.now() - baseServerTime);
+    var pos = baseProgressMs + (Date.now() - baseServerTime);
+    // Don't let the local clock run past the track while we're holding a
+    // stale state through a connection blip.
+    if (durationMs > 0 && pos > durationMs) pos = durationMs;
+    return pos;
   }
 
   function tick() {
@@ -592,15 +602,38 @@
     showLyricLines(activeIdx, true);
   }
 
+  function goStandby() {
+    document.getElementById('stage').style.display = 'none';
+    document.getElementById('idle').style.display = 'flex';
+    lastTrackKey = null;
+    isPlaying = false;
+  }
+
   function poll() {
     xhrGet('/api/now-playing', function (err, data, roundTripMs) {
+      // A single bad poll is not proof the music stopped. Network blips,
+      // the host waking from sleep, token refreshes and Spotify's own 204
+      // during track changes all produce momentary empties. Only fall back
+      // to Standby after several consecutive misses, so the display keeps
+      // showing the current track instead of flickering to "Silence".
       if (err || !data || !data.playing) {
-        document.getElementById('stage').style.display = 'none';
-        document.getElementById('idle').style.display = 'flex';
-        lastTrackKey = null;
-        isPlaying = false;
+        var transient = !!err || (data && data.reason && data.reason !== 'nothing_playing');
+        consecutiveMisses++;
+
+        // Genuine "nothing playing" is trusted sooner than an error.
+        var threshold = transient ? TRANSIENT_TOLERANCE : STOPPED_TOLERANCE;
+        if (consecutiveMisses >= threshold) {
+          goStandby();
+        }
+        // Retry sooner than the normal interval so a brief blip recovers
+        // quickly rather than leaving a stale screen for 4s at a time.
+        if (consecutiveMisses < threshold) {
+          setTimeout(poll, 1500);
+        }
         return;
       }
+
+      consecutiveMisses = 0;
       document.getElementById('stage').style.display = 'flex';
       document.getElementById('idle').style.display = 'none';
 
