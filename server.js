@@ -265,37 +265,78 @@ async function fetchLyrics(artist, title, album, durationSec) {
   return result;
 }
 
+// Fetch with one automatic retry on 401 using a freshly minted token.
+// A cached access token can expire between our check and Spotify's read,
+// which would otherwise surface as a hard failure.
+async function spotifyFetch(url) {
+  let token = await getAccessToken();
+  let res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (res.status === 401) {
+    cachedAccessToken = null;
+    tokenExpiresAt = 0;
+    token = await getAccessToken();
+    res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  }
+  return res;
+}
+
 app.get('/api/now-playing', async (req, res) => {
   try {
-    const token = await getAccessToken();
-    const npRes = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
+    // additional_types=episode so podcasts don't come back as an empty
+    // item and look identical to "nothing playing".
+    const npUrl =
+      'https://api.spotify.com/v1/me/player/currently-playing?additional_types=track,episode';
+    let npRes = await spotifyFetch(npUrl);
+    let data = null;
 
-    if (npRes.status === 204 || npRes.status === 202) {
-      return res.json({ playing: false });
-    }
-    if (!npRes.ok) {
+    if (npRes.ok) {
       const text = await npRes.text();
-      return res.status(502).json({ error: 'spotify_error', detail: text });
+      if (text) {
+        try { data = JSON.parse(text); } catch (e) { data = null; }
+      }
+    } else if (npRes.status !== 204 && npRes.status !== 202) {
+      const text = await npRes.text();
+      // Surface as a transient problem rather than "stopped", so the
+      // display keeps showing the last known track instead of blanking.
+      return res
+        .status(502)
+        .json({ playing: false, reason: 'spotify_error', detail: text.slice(0, 300) });
     }
 
-    const data = await npRes.json();
+    // currently-playing returns 204 in situations where playback is
+    // actually still active (device handoff, track transition). Fall back
+    // to the fuller player-state endpoint before concluding it stopped.
     if (!data || !data.item) {
-      return res.json({ playing: false });
+      const stateRes = await spotifyFetch(
+        'https://api.spotify.com/v1/me/player?additional_types=track,episode'
+      );
+      if (stateRes.ok) {
+        const stateText = await stateRes.text();
+        if (stateText) {
+          try {
+            const stateData = JSON.parse(stateText);
+            if (stateData && stateData.item) data = stateData;
+          } catch (e) { /* ignore */ }
+        }
+      }
+    }
+
+    if (!data || !data.item) {
+      return res.json({ playing: false, reason: 'nothing_playing' });
     }
 
     const track = data.item;
-    const artist = track.artists.map((a) => a.name).join(', ');
+    const artist = Array.isArray(track.artists) && track.artists.length
+      ? track.artists.map((a) => a.name).join(', ')
+      : (track.show ? track.show.name : 'Unknown');
     const title = track.name;
-    const album = track.album ? track.album.name : '';
+    const album = track.album ? track.album.name : (track.show ? track.show.name : '');
     const durationMs = track.duration_ms;
     const rawProgressMs = data.progress_ms;
     const isPlaying = data.is_playing;
-    const albumArt =
-      track.album && track.album.images && track.album.images[0]
-        ? track.album.images[0].url
-        : null;
+    const images = (track.album && track.album.images) ||
+                   (track.show && track.show.images) || [];
+    const albumArt = images.length ? images[0].url : null;
 
     // rawProgressMs reflects playback position at the moment Spotify answered.
     // fetchLyrics()/extractPalette() below can take a while on an uncached
@@ -326,7 +367,7 @@ app.get('/api/now-playing', async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'server_error', detail: String(err) });
+    res.status(500).json({ playing: false, reason: 'server_error', detail: String(err).slice(0, 300) });
   }
 });
 
