@@ -394,12 +394,15 @@
 
 <script>
 (function () {
-  var POLL_MS = 4000;
-  // How many consecutive bad polls before giving up and showing Standby.
-  // Errors get more patience than a clean "nothing playing" response,
-  // since errors are far more likely to be temporary.
-  var TRANSIENT_TOLERANCE = 5;   // ~20s of failures
-  var STOPPED_TOLERANCE = 2;     // ~8s of confirmed silence
+  // Poll interval. The server caches Spotify responses independently, so
+  // this only controls how often the display refreshes from the server -
+  // it does NOT drive Spotify request volume.
+  var POLL_MS = 5000;
+  // How many consecutive bad polls before showing Standby. Generous for
+  // errors (a rate-limit backoff can last minutes and playback continues
+  // fine throughout), strict for a confirmed stop.
+  var TRANSIENT_TOLERANCE = 12;  // ~60s of failures
+  var STOPPED_TOLERANCE = 2;     // ~10s of confirmed silence
   var consecutiveMisses = 0;
   var lastTrackKey = null;
   var syncedLines = [];
@@ -617,19 +620,18 @@
       // to Standby after several consecutive misses, so the display keeps
       // showing the current track instead of flickering to "Silence".
       if (err || !data || !data.playing) {
-        var transient = !!err || (data && data.reason && data.reason !== 'nothing_playing');
+        var reason = (data && data.reason) || 'network';
+        var transient = !!err || (reason !== 'nothing_playing');
         consecutiveMisses++;
 
-        // Genuine "nothing playing" is trusted sooner than an error.
         var threshold = transient ? TRANSIENT_TOLERANCE : STOPPED_TOLERANCE;
         if (consecutiveMisses >= threshold) {
           goStandby();
         }
-        // Retry sooner than the normal interval so a brief blip recovers
-        // quickly rather than leaving a stale screen for 4s at a time.
-        if (consecutiveMisses < threshold) {
-          setTimeout(poll, 1500);
-        }
+        // NOTE: deliberately no fast retry here. An extra retry fires on
+        // top of the regular interval, so failures would generate MORE
+        // traffic - which is how the Spotify rate limit got tripped. The
+        // regular poll interval is the only request cadence.
         return;
       }
 
